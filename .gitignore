@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv*/
+
+# generated, never committed
+runs/
+data/
+questions/
+checkpoints/
+outputs/
+*.log
+
+# private research log
+PROGRESS.md

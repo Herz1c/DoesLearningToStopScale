@@ -1,0 +1,5 @@
+third_party/thinkingcap_eval/ contains the evaluation harness of the ThinkingCap Test by BottleCapAI
+(https://github.com/BottleCapAI/ThinkingCap-Test, commit 5f9119e): evaluate.py, compare.py, utils/ and
+requirements.txt, unmodified, under the Apache License 2.0 (third_party/thinkingcap_eval/LICENSE).
+It is included so that every result here is measured with exactly the same prompts, sampling, token
+caps and metric as the earlier Qwen3-0.6B study. The benchmarks it downloads belong to their authors.
