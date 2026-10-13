@@ -3,7 +3,7 @@
     python analysis/curve_plot.py --base runs/base_s2 --out figures/length_accuracy.png \
         "math m0=runs/stoppoint_s2" "code=runs/stoppoint_code_s2" "all three=runs/stoppoint_all3_s2" ...
 
-Each point is compare.py's own average over the four benchmarks (tokens saved as the geometric
+Each point is evaluation/compare.py's own average over the four benchmarks (tokens saved as the geometric
 mean of per-benchmark ratios, accuracy change as the mean), with its 95% paired-bootstrap
 intervals as error bars. Nothing is recomputed differently from the evaluation's comparison.
 Also writes the numbers next to the figure as JSON.
@@ -15,8 +15,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
-from utils.eval.compare import compare  # noqa: E402
+from evaluation.compare import compare  # noqa: E402
 
 
 def main():
@@ -37,7 +36,7 @@ def main():
             label, where = label.split("@")
             offset = tuple(float(v) for v in where.split(","))
         average = compare(arguments.base, run)["average"]
-        intervals = average["intervals"]
+        intervals = average["interval"]
         points.append({"label": label, "run": run, "offset": offset,
                        "tokens_saved": average["token_reduction"], "tokens_ci": intervals["token_reduction"],
                        "accuracy": average["accuracy_delta"], "accuracy_ci": intervals["accuracy_delta"]})

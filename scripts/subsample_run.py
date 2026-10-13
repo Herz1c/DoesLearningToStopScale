@@ -1,10 +1,10 @@
 """A view of a finished run with only its first N samples per question, for quick comparisons.
 
     python scripts/subsample_run.py runs/base runs/base_s2 --samples 2
-    python evaluate.py --out runs/mine_s2 --adapter ./lora --samples 2
-    python compare.py runs/base_s2 runs/mine_s2
+    python -m evaluation.run --out runs/mine_s2 --adapter checkpoints/lora --samples 2
+    python -m evaluation.compare runs/base_s2 runs/mine_s2
 
-compare.py pairs runs only when their sample counts match. A quick evaluation with
+evaluation.compare pairs runs only when their sample counts match. A quick evaluation with
 --samples 2 asks every question with the same seeds as samples 0 and 1 of the full
 run (seeds come from the question and the sample index), so the first two samples of
 the full baseline are its natural partner. Nothing is regenerated: this copies the

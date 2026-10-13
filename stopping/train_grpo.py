@@ -39,9 +39,8 @@ import time
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
 from stopping.grading import grade  # noqa: E402
-from utils.eval.recipe import SAMPLING  # noqa: E402
+from evaluation.protocol import SAMPLING  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 LOSS_CHUNK = 1024
@@ -55,10 +54,16 @@ POOLS = {   # domain: (files, source filter or None, max tokens)
 }
 
 
-def load_pools(weights):
+def load_pools(weights, overrides=()):
+    """Prompt rows and token cap per domain; `overrides` ("math=data/math_mix_train.jsonl") replace a
+    domain's files (no source filter), e.g. by the difficulty-matched pools of stopping/mix_pools.py."""
+    table = dict(POOLS)
+    for item in overrides:
+        domain, path = item.split("=", 1)
+        table[domain] = (path.split("+"), None, POOLS[domain][2])
     pools = {}
     for domain in weights:
-        paths, source, cap = POOLS[domain]
+        paths, source, cap = table[domain]
         rows = [json.loads(l) for path in paths for l in Path(path).read_text().splitlines()]
         rows = [r for r in rows if source is None or r.get("source") == source]
         pools[domain] = (rows, cap)
@@ -89,10 +94,12 @@ def main():
     parser.add_argument("--weights", default="math=0.5,code=0.2,tool=0.15,instruction=0.15")
     parser.add_argument("--vllm-memory", type=float, default=0.35)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--pool", action="append", default=[],
+                        help="Replace a domain's prompt files, e.g. math=data/math_mix_train.jsonl (repeatable)")
     arguments = parser.parse_args()
 
     weights = {k: float(v) for k, v in (p.split("=") for p in arguments.weights.split(","))}
-    pools = load_pools(weights)
+    pools = load_pools(weights, arguments.pool)
     rng = random.Random(arguments.seed)
     torch.manual_seed(arguments.seed)
     arguments.out.mkdir(parents=True, exist_ok=True)
@@ -187,7 +194,10 @@ def main():
             if ks:
                 stats[d] = {"acc": round(sum(correct[k] for k in ks) / len(ks), 3),
                             "len": round(sum(lengths[k] for k in ks) / len(ks)),
-                            "capped": sum(outputs[k][3].finish_reason == "length" for k in ks)}
+                            "capped": sum(outputs[k][3].finish_reason == "length" for k in ks),
+                            # groups with both right and wrong answers: the only ones with an accuracy contrast
+                            "mixed": sum(0 < sum(correct[k] for k in m) < len(m)
+                                         for i, m in groups.items() if outputs[m[0]][1] == d)}
         log.write(json.dumps(stats) + "\n")
         log.flush()
         print(json.dumps(stats), flush=True)

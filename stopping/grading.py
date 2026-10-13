@@ -4,8 +4,7 @@
     grade([(row, completion_text), ...])  ->  [(strict, knows), ...]
 
 `strict` is what the evaluation would accept; `knows` is whether the answer is right
-however it is formatted. For math and multiple choice these are utils/train/rewards.py
-and the lenient grader of analysis/forced_stop_sweep.py. For code both mean "passes the
+however it is formatted. For math and multiple choice both are in stopping/answers.py. For code both mean "passes the
 unit tests", strict additionally requiring exactly one fenced code block
 (stopping/code_tasks.py). For tool calls both mean "the right call, or rightly no call",
 strict additionally requiring the bare call list (stopping/tool_tasks.py). Code is graded in
@@ -16,9 +15,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
-from analysis.forced_stop_sweep import knows  # noqa: E402
-from utils.train.rewards import is_task_correct  # noqa: E402
+from stopping.answers import is_task_correct, knows  # noqa: E402
 
 
 def grade(pairs):

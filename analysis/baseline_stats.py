@@ -1,4 +1,4 @@
-"""Where do the base model's tokens go? Reads one evaluate.py run and describes it.
+"""Where do the base model's tokens go? Reads one evaluation.run run and describes it.
 
     python analysis/baseline_stats.py runs/base
     python analysis/baseline_stats.py runs/base --examples 3    # also print suspected loops
@@ -43,7 +43,7 @@ LENGTH_BINS = 5
 
 
 def benchmark_of(dataset):
-    """BFCL's three subsets are one benchmark, as in utils/eval/compare.py."""
+    """BFCL's three subsets are one benchmark, as in evaluation/compare.py."""
     return "bfcl" if dataset.startswith("bfcl_") else dataset
 
 
@@ -123,7 +123,7 @@ def describe(records):
 
 
 def geometric_saving(savings):
-    """Average saving over benchmarks the way compare.py averages: 1 - geomean of ratios."""
+    """Average saving over benchmarks the way evaluation/compare.py averages: 1 - geomean of ratios."""
     return 1 - math.exp(sum(math.log(1 - s) for s in savings) / len(savings))
 
 
@@ -159,7 +159,7 @@ def markdown(stats, average):
     lines = ["| | " + " | ".join(names) + " |", "| --- |" + " --- |" * len(names)]
     for label, key, fmt in rows:
         lines.append(f"| {label} | " + " | ".join(fmt.format(stats[n][key]) for n in names) + " |")
-    lines += ["", "Average saving over benchmarks (geometric, as compare.py):",
+    lines += ["", "Average saving over benchmarks (geometric, as evaluation/compare.py):",
               f"- oracle shortest correct: {average['oracle_shortest_correct']:.1%}",
               f"- oracle no truncation: {average['oracle_no_truncation']:.1%}", "",
               "Accuracy by length bin (equal-count bins, shortest first):", ""]
@@ -236,7 +236,7 @@ def print_loops(groups, count):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("run", type=Path, help="A directory written by evaluate.py")
+    parser.add_argument("run", type=Path, help="A directory written by evaluation.run")
     parser.add_argument("--examples", type=int, default=0,
                         help="Print the end of this many suspected loops per benchmark")
     arguments = parser.parse_args()

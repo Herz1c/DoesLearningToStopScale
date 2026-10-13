@@ -36,11 +36,10 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
 from analysis.verified_stops import CUES, is_check  # noqa: E402
 from stopping.find_stop_points import DOUBLE_NEWLINE, MODEL, THINK_CLOSE, boundaries, forced_ids  # noqa: E402
 from stopping.grading import grade  # noqa: E402
-from utils.eval.recipe import SAMPLING  # noqa: E402
+from evaluation.protocol import SAMPLING  # noqa: E402
 
 SAMPLES, NEEDED, MAX_STEPS = 6, 5, 6
 DRAFT = re.compile(r"```|(^|\n)\s*def \w+\s*\(")     # the function written out, not just planned

@@ -18,7 +18,7 @@ evaluation question.
 The system prompt is our own wording and asks for the same answer syntax the evaluation
 reads, a Python list of calls with keyword arguments: [func(a=1, b="x")].
 
-Grading parses the reply with utils/eval/graders.decode_calls (ast parsing and literal_eval
+Grading parses the reply with evaluation/graders.parse_calls (ast parsing and literal_eval
 only; nothing is executed). A call is right when the names match and every argument matches
 the reference (numbers by value, strings ignoring case and surrounding space). No-call
 follows BFCL's rule: anything that is not a parseable call is correct. *knows* also accepts a
@@ -34,8 +34,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
-from utils.eval.graders import decode_calls  # noqa: E402
+from evaluation.graders import parse_calls  # noqa: E402
 
 SYSTEM = ("You can use the functions listed below. Read the user's request. If one or more of the "
           "functions fulfil it, reply with only the call(s), as a Python list with keyword arguments: "
@@ -65,7 +64,7 @@ def same_value(a, b):
 def matches(reply, target):
     """target: None for no call, else {"name": ..., "arguments": {...}}."""
     try:
-        calls = decode_calls(reply)
+        calls = parse_calls(reply)
     except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
         return target is None
     if target is None:

@@ -8,7 +8,7 @@ Both the reference baseline (SFT on the shortest correct rollout) and stop-point
 distillation start from the same thing: several samples of Qwen3-0.6B answering a
 training question, with the evaluation's sampling. This writes them once.
 
-Questions come from data/train.jsonl (utils/train/prepare_data.py), never from the
+Questions come from data/train.jsonl (stopping/base_data.py), never from the
 evaluation benchmarks or from data/val.jsonl. Each row keeps the generated token ids,
 so later steps can cut and train on exactly what the model produced instead of a
 re-tokenization of its text.
@@ -28,9 +28,8 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
 from stopping.grading import grade  # noqa: E402
-from utils.eval.recipe import SAMPLING  # noqa: E402
+from evaluation.protocol import SAMPLING  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 MAX_TOKENS = 4096
@@ -80,7 +79,7 @@ def main():
     if not todo:
         return
 
-    # As in evaluate.py: FlashInfer's sampler compiles a kernel with nvcc, which
+    # As in evaluation/run.py: FlashInfer's sampler compiles a kernel with nvcc, which
     # driver-only machines do not have. The PyTorch sampler needs no toolchain.
     os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     from transformers import AutoTokenizer

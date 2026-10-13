@@ -5,11 +5,11 @@
 One trainer for every supervised method in this project: each row carries a chat
 prompt and the exact token ids the model should produce. The loss is computed on the
 completion only; the prompt is context. Training sequences are built the way
-evaluate.py builds its inputs (chat template, thinking enabled), so the model learns
+evaluation/run.py builds its inputs (chat template, thinking enabled), so the model learns
 in the format it is scored in.
 
 The adapter targets only the projections vLLM can serve as a LoRA (attention and
-MLP), so evaluate.py --adapter loads it unchanged. It is saved as safetensors.
+MLP), so evaluation/run.py --adapter (and vLLM) loads it unchanged. It is saved as safetensors.
 
 Memory: one sequence per step with gradient checkpointing; with a 151,936-token
 vocabulary the logits dominate, so the loss is computed in chunks of positions and

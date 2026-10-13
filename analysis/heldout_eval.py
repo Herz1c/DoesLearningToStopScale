@@ -11,11 +11,13 @@ runs a model once on two sets that played no part in any decision:
 - HumanEval (openai/openai_humaneval, 164 tasks, 4 samples): code, like MBPP but other tasks; the
   task's own `check` run in the code sandbox (stopping/code_tasks.py);
 - GSM8K test (openai/gsm8k main/test, the first 500 of 1,319 problems, 2 samples): grade-school math word problems
-  like SVAMP; only GSM8K's train split was ever used for training.
+  like SVAMP; only GSM8K's train split was ever used for training;
+- MATH-500, all five levels, whole-number answers (HuggingFaceH4/MATH-500, 4 samples): the difficulty ladder
+  added for the scaling study (Amendments 2 and 3), reported per level; training uses only MATH's train split.
 
 Prompts are written once here, in the style of the training tasks; the evaluation's sampling and
 4,096-token cap (code 8,192) apply. Reported per set: tokens saved against base (ratio of sums,
-as compare.py), accuracy, capped responses, paired bootstrap intervals over questions.
+as evaluation/compare.py), accuracy, capped responses, paired bootstrap intervals over questions.
 """
 
 import argparse
@@ -23,28 +25,37 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
 from stopping.grading import grade  # noqa: E402
-from utils.eval.recipe import SAMPLING  # noqa: E402
+from evaluation.protocol import SAMPLING  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 CODE_PROMPT = ("Complete the following Python function. Give the complete function, including the signature, "
                "in a single fenced Python code block.\n\n```python\n{prompt}```")
 MATH_PROMPT = "{question}\n\nPut the final answer on the last line, like: Final answer: 42"
+SETS = ("humaneval", "gsm8k_test", "math500")
 
 
-def questions(code_samples=4, math_questions=500):
+def questions(code_samples=4, math_questions=500, sets=SETS):
     from datasets import load_dataset
     rows = []
-    for r in load_dataset("openai/openai_humaneval", split="test"):
+    if "math500" in sets:
+        # MATH-500 (PRM800K's 500 MATH test problems), all levels, whole-number answers (Amendments 2, 3).
+        for r in load_dataset("HuggingFaceH4/MATH-500", split="test"):
+            answer = r["answer"].strip().replace(",", "").strip("$ ")
+            if re.fullmatch(r"-?\d+", answer):
+                rows.append({"set": "math500", "id": r["unique_id"], "level": r["level"], "task": "math", "samples": 4,
+                             "max_tokens": 4096, "answer": answer,
+                             "prompt": [{"role": "user", "content": MATH_PROMPT.format(question=r["problem"])}]})
+    for r in load_dataset("openai/openai_humaneval", split="test") if "humaneval" in sets else []:
         tests = f"{r['test']}\n\ndef test_humaneval():\n    check({r['entry_point']})\n"
         rows.append({"set": "humaneval", "id": r["task_id"], "task": "code", "samples": code_samples, "max_tokens": 8192,
                      "tests": tests, "entry_point": r["entry_point"],
                      "prompt": [{"role": "user", "content": CODE_PROMPT.format(prompt=r["prompt"])}]})
-    for i, r in enumerate(load_dataset("openai/gsm8k", "main", split="test")):
+    for i, r in enumerate(load_dataset("openai/gsm8k", "main", split="test") if "gsm8k_test" in sets else []):
         if i == math_questions:
             break
         rows.append({"set": "gsm8k_test", "id": f"gsm8k-test-{i}", "task": "math", "samples": 2, "max_tokens": 4096,
@@ -63,17 +74,20 @@ def run(arguments):
     llm = LLM(model=MODEL, gpu_memory_utilization=0.85, max_model_len=8192 + 1024, seed=9001,
               enable_lora=rank is not None, max_lora_rank=rank or 16)
     lora = LoRARequest("candidate", 1, str(arguments.adapter.resolve())) if arguments.adapter else None
-    rows = questions()
+    rows = questions(sets=arguments.sets.split(","))
     records = []
-    for group in ({"humaneval"}, {"gsm8k_test"}):
+    for group in ({"humaneval"}, {"gsm8k_test"}, {"math500"}):
         part = [r for r in rows if r["set"] in group]
+        if not part:
+            continue
         params = SamplingParams(**SAMPLING, n=part[0]["samples"], max_tokens=part[0]["max_tokens"], seed=9001)
         prompts = [tokenizer.apply_chat_template(r["prompt"], tokenize=False, add_generation_prompt=True,
                                                  enable_thinking=True) for r in part]
         for r, result in zip(part, llm.generate(prompts, params, lora_request=lora)):
             for k, o in enumerate(result.outputs):
                 text = tokenizer.decode(list(o.token_ids), skip_special_tokens=True)
-                records.append({"set": r["set"], "id": r["id"], "sample": k, "tokens": len(o.token_ids),
+                records.append({"set": r["set"], "id": r["id"], "level": r.get("level"), "sample": k,
+                                "tokens": len(o.token_ids),
                                 "truncated": o.finish_reason == "length", "row": r, "text": text})
     verdicts = grade([(rec["row"], rec["text"]) for rec in records])
     arguments.out.mkdir(parents=True, exist_ok=True)
@@ -116,6 +130,7 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--adapter", type=Path)
     parser.add_argument("--compare", nargs=2, type=Path)
+    parser.add_argument("--sets", default=",".join(SETS), help=f"Comma-separated subset of {', '.join(SETS)}")
     arguments = parser.parse_args()
     if arguments.compare:
         compare(*arguments.compare)

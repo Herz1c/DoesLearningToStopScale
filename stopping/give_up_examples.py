@@ -32,11 +32,10 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
 from stopping.find_stop_points import DOUBLE_NEWLINE, MODEL, THINK_CLOSE, boundaries, forced_ids  # noqa: E402
 from stopping.grading import grade  # noqa: E402
-from utils.eval.recipe import SAMPLING  # noqa: E402
-from utils.train.rewards import final_answer  # noqa: E402
+from evaluation.protocol import SAMPLING  # noqa: E402
+from stopping.answers import final_answer  # noqa: E402
 
 SAMPLES = 4
 NUMBER = re.compile(r"-?[\d,]*\.?\d+")

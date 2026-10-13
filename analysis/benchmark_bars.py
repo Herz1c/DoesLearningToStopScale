@@ -4,8 +4,8 @@
         --out figures/benchmark_bars.png
 
 Mean generated tokens per response (thinking included, capped responses at their cap) and accuracy
-per benchmark, BFCL's three subsets pooled as in compare.py. Descriptive only; the intervals are
-in compare.py's output.
+per benchmark, BFCL's three subsets pooled as in evaluation/compare.py. Descriptive only; the intervals are
+in evaluation/compare.py's output.
 """
 
 import argparse

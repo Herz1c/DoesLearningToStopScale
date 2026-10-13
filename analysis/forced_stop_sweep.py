@@ -1,6 +1,6 @@
 """How much of the thinking does the answer actually need? Forces </think> part-way.
 
-    python utils/train/prepare_data.py                      # once: writes data/val.jsonl
+    python stopping/base_data.py                            # once: writes data/val.jsonl
     python analysis/forced_stop_sweep.py --out runs/sweep    # ~1 h on one consumer GPU
     python analysis/forced_stop_sweep.py --out runs/sweep --reuse-rollouts   # redo the cuts only
     python analysis/forced_stop_sweep.py --out runs/sweep --plot-only
@@ -11,7 +11,7 @@ is cut at paragraph boundaries ("\\n\\n") nearest to fixed fractions of its leng
 </think> is inserted there, and the model finishes only the answer. This gives
 accuracy as a function of how much of its own thinking the model was allowed to keep.
 
-Every answer is graded twice. `accuracy` follows utils/train/rewards.py, which, like
+Every answer is graded twice (stopping/answers.py). `accuracy`, like
 the evaluation, wants "Final answer:" on the last line. `knows` accepts the last
 "Final answer:" or \\boxed{} anywhere after </think>: Qwen3-0.6B often writes the
 right final answer and then repeats it in a \\boxed{} line, which the strict grader
@@ -34,10 +34,8 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "thinkingcap_eval"))  # evaluation harness
-from utils.eval.recipe import SAMPLING  # noqa: E402
-from utils.train.rewards import (clean_answer, is_task_correct, same_choice,  # noqa: E402
-                                 same_number)
+from evaluation.protocol import SAMPLING  # noqa: E402
+from stopping.answers import is_task_correct, knows  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 FRACTIONS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -56,21 +54,6 @@ def pick_questions(path, per_source, seed):
         rng.shuffle(by_source[source])
         picked += by_source[source][:per_source]
     return picked
-
-
-LAST_FINAL = re.compile(r"Final answer:[ \t]*([^\n]+)")
-LAST_BOXED = re.compile(r"\\boxed\{([^{}]*)\}")
-
-
-def knows(completion, answer, task):
-    """Lenient grade: the last "Final answer:" value, else the last \\boxed{}, anywhere after </think>."""
-    response = completion.split("</think>")[-1].replace("**", "")
-    finals, boxed = LAST_FINAL.findall(response), LAST_BOXED.findall(response)
-    candidate = finals[-1] if finals else boxed[-1] if boxed else None
-    if candidate is None:
-        return False
-    candidate = clean_answer(candidate.strip())
-    return same_number(candidate, answer) if task == "math" else same_choice(candidate, answer)
 
 
 def cut(thinking, fraction):
@@ -94,14 +77,14 @@ def forced_prompt(prompt_text, prefix):
 
 
 def generate(out, questions, rollouts, answers, seed, reuse):
-    # As in evaluate.py: FlashInfer's sampler compiles a kernel with nvcc, which
+    # As in evaluation/run.py: FlashInfer's sampler compiles a kernel with nvcc, which
     # driver-only machines do not have. The PyTorch sampler needs no toolchain.
     os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     from vllm import LLM, SamplingParams
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
-    # Prefix caching is off in evaluate.py for reproducible scores; here it only
+    # Prefix caching is off in evaluation/run.py for reproducible scores; here it only
     # saves recomputing the shared thinking prefixes, so it is on.
     llm = LLM(model=MODEL, enable_prefix_caching=True, gpu_memory_utilization=0.85,
               max_model_len=MAX_TOKENS + 2048, seed=seed)
