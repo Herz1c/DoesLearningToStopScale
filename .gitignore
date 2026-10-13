@@ -6,6 +6,7 @@ __pycache__/
 runs/
 data/
 questions/
+bench/
 checkpoints/
 outputs/
 *.log
