@@ -1,6 +1,7 @@
 """Code tasks for stop-point distillation: data from KodCode, and a sandboxed test runner.
 
     python stopping/code_tasks.py build --train 1500 --val 100     # writes data/code_train.jsonl, data/code_val.jsonl
+    python stopping/code_tasks.py build --difficulty medium,hard --prefix code_hard   # harder pool for 1.7B
 
 Source: KodCode/KodCode-Light-RL-10K (CC BY-NC 4.0; used for non-commercial research, not
 redistributed). Each task asks for one Python function and comes with pytest-style unit
@@ -55,10 +56,14 @@ def strict_code(response):
     return blocks[0]
 
 
-def lenient_code(response):
-    """The last fenced block, else the whole reply."""
+def lenient_code(response, entry_point=None):
+    """The last fenced block that defines the entry point, else the last block, else the whole reply.
+
+    Qwen3-1.7B often follows its solution with a usage-example block; the last block alone would then
+    be the example (Amendment 2 in the research log)."""
     blocks = FENCE.findall(response)
-    return blocks[-1] if blocks else response
+    defining = [b for b in blocks if entry_point and re.search(rf"^\s*def {re.escape(entry_point)}\b", b, re.M)]
+    return defining[-1] if defining else blocks[-1] if blocks else response
 
 
 # ---------- sandbox ----------
@@ -112,7 +117,8 @@ def grade_code(pairs):
     jobs, plan = [], []
     for row, text in pairs:
         response = text.split("</think>")[-1] if "</think>" in text else ""
-        strict, lenient = strict_code(response), lenient_code(response) if response.strip() else None
+        strict = strict_code(response)
+        lenient = lenient_code(response, row.get("entry_point")) if response.strip() else None
         entries = []
         for code in (strict, lenient):
             if code is None:
@@ -147,9 +153,10 @@ def plain_tests(tests):
 def build(arguments):
     from datasets import load_dataset
     rows = load_dataset("KodCode/KodCode-Light-RL-10K", split="train")
+    levels = set(arguments.difficulty.split(","))
     candidates = []
     for r in rows:
-        if r["gpt_difficulty"] != "easy" or r["subset"] == "Package" or len(r["test_info"]) != 1:
+        if r["gpt_difficulty"] not in levels or r["subset"] == "Package" or len(r["test_info"]) != 1:
             continue
         if not plain_tests(r["test"]):
             continue
@@ -160,7 +167,7 @@ def build(arguments):
                            "task": "code", "source": "kodcode", "kodcode_id": r["question_id"],
                            "subset": r["subset"], "tests": r["test"], "entry_point": info["function_name"],
                            "reference": r["solution"]})
-    print(f"{len(candidates)} easy, single-function, plain-test tasks", flush=True)
+    print(f"{len(candidates)} {arguments.difficulty}, single-function, plain-test tasks", flush=True)
     random.Random(0).shuffle(candidates)
     pool = candidates[:int((arguments.train + arguments.val) * 1.3)]
     verdicts = run_programs([(c["reference"], c["tests"]) for c in pool])
@@ -170,7 +177,7 @@ def build(arguments):
         del c["reference"]
     val, train = passing[:arguments.val], passing[arguments.val:arguments.val + arguments.train]
     Path("data").mkdir(exist_ok=True)
-    for name, part in (("code_train", train), ("code_val", val)):
+    for name, part in ((f"{arguments.prefix}_train", train), (f"{arguments.prefix}_val", val)):
         Path(f"data/{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in part))
         print(f"data/{name}.jsonl: {len(part)} rows")
 
@@ -181,6 +188,8 @@ def main():
     b = sub.add_parser("build")
     b.add_argument("--train", type=int, default=1500)
     b.add_argument("--val", type=int, default=100)
+    b.add_argument("--difficulty", default="easy", help="Comma-separated gpt_difficulty labels")
+    b.add_argument("--prefix", default="code", help="Writes data/<prefix>_train.jsonl and _val.jsonl")
     arguments = parser.parse_args()
     if arguments.command == "build":
         build(arguments)
