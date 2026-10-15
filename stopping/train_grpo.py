@@ -94,6 +94,9 @@ def main():
     parser.add_argument("--weights", default="math=0.5,code=0.2,tool=0.15,instruction=0.15")
     parser.add_argument("--vllm-memory", type=float, default=0.35)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue a stopped run: adapter from <out>/latest, steps and domain means from its "
+                             "log, optimizer state from <out>/optimizer.pt if present, prompt order replayed")
     parser.add_argument("--pool", action="append", default=[],
                         help="Replace a domain's prompt files, e.g. math=data/math_mix_train.jsonl (repeatable)")
     arguments = parser.parse_args()
@@ -119,14 +122,30 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch.bfloat16).to("cuda")
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
-    model = PeftModel.from_pretrained(model, str(arguments.init), is_trainable=True)
+    # Resuming: the prompt draws of the finished steps are replayed so the run continues with the prompts an
+    # uninterrupted run would have drawn; the domain means are the first logged mean length per domain.
+    done, minutes_before, domain_mean = 0, 0.0, {}
+    if arguments.resume:
+        history = [json.loads(l) for l in (arguments.out / "log.jsonl").read_text().splitlines() if l.strip()]
+        done, minutes_before = len(history), history[-1]["minutes"]
+        for d in weights:
+            first = next((h[d]["len"] for h in history if d in h), None)
+            if first is not None:
+                domain_mean[d] = first
+        for _ in range(done):
+            for d in rng.choices(list(weights), weights=list(weights.values()), k=arguments.prompts):
+                rng.choice(pools[d][0])
+        print(f"resuming after step {done}; domain means {domain_mean}", flush=True)
+    start_adapter = arguments.out / "latest" if arguments.resume else arguments.init
+    model = PeftModel.from_pretrained(model, str(start_adapter), is_trainable=True)
     parameters = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(parameters, lr=arguments.lr, weight_decay=0.0)
+    if arguments.resume and (arguments.out / "optimizer.pt").exists():
+        optimizer.load_state_dict(torch.load(arguments.out / "optimizer.pt"))
 
-    current = arguments.init
-    domain_mean = {}
+    current = start_adapter
     started = time.monotonic()
-    for step in range(arguments.steps):
+    for step in range(done, arguments.steps):
         # ---- sample prompts and generate a group for each with the current adapter
         domains = rng.choices(list(weights), weights=list(weights.values()), k=arguments.prompts)
         batch = [(d, rng.choice(pools[d][0])) for d in domains]
@@ -184,10 +203,11 @@ def main():
 
         current = arguments.out / "latest"
         model.save_pretrained(current, safe_serialization=True)
+        torch.save(optimizer.state_dict(), arguments.out / "optimizer.pt")
         if (step + 1) % 10 == 0 or step == arguments.steps - 1:
             model.save_pretrained(arguments.out / f"step{step + 1}", safe_serialization=True)
 
-        stats = {"step": step + 1, "minutes": round((time.monotonic() - started) / 60, 1),
+        stats = {"step": step + 1, "minutes": round(minutes_before + (time.monotonic() - started) / 60, 1),
                  "active": len(active), "samples": len(outputs)}
         for d in weights:
             ks = [k for k, (_, dd, _, _) in enumerate(outputs) if dd == d]
