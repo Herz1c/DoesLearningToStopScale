@@ -1,17 +1,16 @@
 # Does Learning to Stop Scale?
 
 In [Where the Thinking Stops Mattering](https://github.com/Herz1c/WhereTheThinkingStopsMattering) I taught
-Qwen3-0.6B to stop reasoning once its own thinking stops mattering: about 43% fewer generated tokens at
-about −1 pp accuracy, with the change in the weights only. This repository asks the obvious next question:
-**does the same recipe work on a larger model, without re-tuning it?** The first step is Qwen3-1.7B.
+Qwen3-0.6B to stop reasoning once its own thinking stops mattering. The result was 43% fewer generated tokens at
+about −1 pp accuracy, with the change being in the weights only. This repository investigates whether
+does the same recipe work on a larger model, without re-tuning it? The first step is Qwen3-1.7B.
 
-**Answer for 1.7B: yes, and slightly better.** Over the same four benchmarks, the 1.7B model trained with
+**Answer for 1.7B is yes, and it is even slightly better.** Over the same four benchmarks, the 1.7B model trained with
 the same recipe generates **47.4% fewer tokens at −0.14 pp average accuracy** (mean of two full evaluations),
 against 43.4% / −0.97 pp at 0.6B. On HumanEval, which played no part in any decision, it saves 58% at
-−0.8 pp. The protocol, the success criterion and every change to the plan were written down before the
-results they could affect.
+−0.8 pp.
 
-Independent student project, October 2026, one RTX 5060 Ti (16 GB), about 70 GPU-hours for the 1.7B run.
+Student project, October 2026, one RTX 5060 Ti (16 GB), about 70 GPU-hours for the 1.7B run.
 
 <p align="center"><img src="figures/scaling_benchmarks.png" alt="Tokens saved and accuracy change per benchmark, Qwen3-0.6B vs Qwen3-1.7B" width="900"></p>
 
