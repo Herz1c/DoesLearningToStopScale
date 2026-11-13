@@ -2,6 +2,8 @@
 
     python stopping/code_tasks.py build --train 1500 --val 100     # writes data/code_train.jsonl, data/code_val.jsonl
     python stopping/code_tasks.py build --difficulty medium,hard --prefix code_hard   # harder pool for 1.7B
+    # next difficulty tier (hard only), disjoint from the pool above:
+    python stopping/code_tasks.py build --difficulty hard --prefix code_hardest --val 0 --exclude data/code_hard_train.jsonl data/code_hard_val.jsonl
 
 Source: KodCode/KodCode-Light-RL-10K (CC BY-NC 4.0; used for non-commercial research, not
 redistributed). Each task asks for one Python function and comes with pytest-style unit
@@ -154,9 +156,10 @@ def build(arguments):
     from datasets import load_dataset
     rows = load_dataset("KodCode/KodCode-Light-RL-10K", split="train")
     levels = set(arguments.difficulty.split(","))
+    used = {json.loads(line)["kodcode_id"] for path in arguments.exclude for line in Path(path).read_text().splitlines()}
     candidates = []
     for r in rows:
-        if r["gpt_difficulty"] not in levels or r["subset"] == "Package" or len(r["test_info"]) != 1:
+        if r["gpt_difficulty"] not in levels or r["question_id"] in used or r["subset"] == "Package" or len(r["test_info"]) != 1:
             continue
         if not plain_tests(r["test"]):
             continue
@@ -178,6 +181,8 @@ def build(arguments):
     val, train = passing[:arguments.val], passing[arguments.val:arguments.val + arguments.train]
     Path("data").mkdir(exist_ok=True)
     for name, part in ((f"{arguments.prefix}_train", train), (f"{arguments.prefix}_val", val)):
+        if not part:
+            continue
         Path(f"data/{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in part))
         print(f"data/{name}.jsonl: {len(part)} rows")
 
@@ -190,6 +195,7 @@ def main():
     b.add_argument("--val", type=int, default=100)
     b.add_argument("--difficulty", default="easy", help="Comma-separated gpt_difficulty labels")
     b.add_argument("--prefix", default="code", help="Writes data/<prefix>_train.jsonl and _val.jsonl")
+    b.add_argument("--exclude", nargs="*", default=[], help="Pool files whose tasks (kodcode_id) are left out")
     arguments = parser.parse_args()
     if arguments.command == "build":
         build(arguments)

@@ -19,9 +19,17 @@ others:
 
 Base instructions: databricks-dolly-15k (human-written, CC BY-SA 3.0); prompts sharing >= 15% of
 an evaluation question's 8-grams are dropped. One or two compatible constraints per prompt.
+
+Harder tiers for larger models: `--constraints 3` or `--constraints 4` gives every prompt exactly
+that many compatible constraints (five sets of three; one set of four: no_digits, table, emojis,
+end_question), on Dolly instructions the pools named in --exclude did not use:
+
+    python stopping/constraint_tasks.py --out data/constraint_c3.jsonl --count 1600 --constraints 3 --seed 2 \
+        --questions bench/questions.jsonl --exclude data/constraint_train.jsonl data/wrapper_train.jsonl
 """
 
 import argparse
+from itertools import combinations
 import json
 from pathlib import Path
 import random
@@ -86,12 +94,25 @@ def grade_constraint(row, text):
     return ok, ok
 
 
+def compatible_sets(size):
+    """Every set of `size` constraint kinds without a conflicting pair, in a fixed order."""
+    return [c for c in combinations(TEXT, size)
+            if not any(frozenset(pair) in CONFLICTS for pair in combinations(c, 2))]
+
+
+def base_text(prompt):
+    """The Dolly instruction of a built prompt (the constraint sentences are its last paragraph)."""
+    return prompt.rsplit("\n\n", 1)[0]
+
+
 def build(arguments):
     from datasets import load_dataset
     from analysis.overlap_check import grams, question_text
     evaluation = set()
     for line in Path(arguments.questions).read_text().splitlines():
         evaluation |= grams(question_text(json.loads(line)["messages"]))
+    used = {base_text(json.loads(line)["prompt"][0]["content"]) for path in arguments.exclude
+            for line in Path(path).read_text().splitlines()}
     rows = list(load_dataset("databricks/databricks-dolly-15k", split="train"))
     rng = random.Random(arguments.seed)
     rng.shuffle(rows)
@@ -100,7 +121,7 @@ def build(arguments):
         if r["category"] in ("classification", "information_extraction") and rng.random() < 0.5:
             continue    # mostly one-word answers, where format constraints are odd
         base = r["instruction"].strip() + (f"\n\n{r['context'].strip()}" if r["context"].strip() else "")
-        if len(base) > 1500:
+        if len(base) > 1500 or base in used:
             continue
         g = grams(base)
         if g and len(g & evaluation) / len(g) >= 0.15:
@@ -110,6 +131,9 @@ def build(arguments):
             chosen = [rng.choice(list(WRAPPERS))]
             if rng.random() < 0.4:
                 chosen.append(rng.choice(WRAP_COMPANIONS))
+        elif arguments.constraints:
+            chosen = list(rng.choice(compatible_sets(arguments.constraints)))
+            rng.shuffle(chosen)
         else:
             kinds = list(TEXT)
             first = rng.choice(kinds)
@@ -139,6 +163,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--wrappers", action="store_true",
                         help="Prompts with one wrapper constraint (and maybe a content constraint) instead")
+    parser.add_argument("--constraints", type=int, choices=(3, 4),
+                        help="Exactly this many compatible constraints per prompt (harder tiers)")
+    parser.add_argument("--exclude", nargs="*", default=[], help="Pool files whose Dolly instructions are left out")
     build(parser.parse_args())
 
 

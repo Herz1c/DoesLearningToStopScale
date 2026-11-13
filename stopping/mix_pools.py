@@ -8,6 +8,10 @@ share of rollouts that know the answer matches a target (the 0.6B base on its or
         --out runs/rollouts_math_mix --pool-easy data/train.jsonl:gsm8k --pool-hard data/math_hard_train.jsonl \
         --pool-out data/math_mix_train.jsonl
 
+    # more than two tiers (4B and larger): which two neighbouring tiers to mix, and in what proportion
+    python stopping/mix_pools.py ladder --tiers runs/cal/math_t0 runs/cal/math_t1 runs/cal/math_t2 --target 0.708 \
+        --out runs/cal/math.json
+
 calibrate: k = share of rollouts with `knows`; f = argmin over {0, 0.1, ..., 1} of |(1-f) k_easy + f k_hard - target|
 (ties: the smaller f); prints f, the question counts for a pool of --size questions, and writes <hard>/calibration.json.
 merge: the first (1-f)*size easy questions and the first f*size hard questions of the rollout files (pick order),
@@ -54,6 +58,30 @@ def calibrate(arguments):
               "predicted_knows": mixed[f], "easy_questions": arguments.size - n_hard, "hard_questions": n_hard,
               "target_reached": abs(mixed[f] - arguments.target) <= 0.05}
     (Path(arguments.hard) / "calibration.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result, indent=2))
+
+
+def ladder(arguments):
+    """Several tiers, easiest first: the pair of neighbouring tiers whose shares enclose the target, and
+    the hard fraction within that pair by the rule of `calibrate`. All tiers easier than the target
+    -> the hardest tier alone, reported as target not reached."""
+    profiles = [profile(load(t)) for t in arguments.tiers]
+    shares = [p["knows"] for p in profiles]
+    grid = [round(0.1 * i, 1) for i in range(11)]
+    if shares[0] <= arguments.target:
+        low = 0
+    else:
+        enclosing = [i for i in range(len(shares) - 1) if shares[i] >= arguments.target >= shares[i + 1]]
+        low = enclosing[0] if enclosing else len(shares) - 2
+    mixed = {f: (1 - f) * shares[low] + f * shares[low + 1] for f in grid}
+    f = 0.0 if shares[0] <= arguments.target else min(grid, key=lambda g: (abs(mixed[g] - arguments.target), g))
+    n_hard = round(f * arguments.size)
+    result = {"target": arguments.target, "tiers": dict(zip(arguments.tiers, profiles)),
+              "easy_tier": arguments.tiers[low], "hard_tier": arguments.tiers[low + 1], "hard_fraction": f,
+              "predicted_knows": mixed[f], "easy_questions": arguments.size - n_hard, "hard_questions": n_hard,
+              "target_reached": abs(mixed[f] - arguments.target) <= 0.05,
+              "monotonic": all(a >= b for a, b in zip(shares, shares[1:]))}
+    Path(arguments.out).write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 
 
@@ -111,8 +139,13 @@ def main():
     m.add_argument("--pool-easy", required=True, help="path[:source] of the easy prompt rows")
     m.add_argument("--pool-hard", required=True)
     m.add_argument("--pool-out", required=True)
+    t = sub.add_parser("ladder")
+    t.add_argument("--tiers", nargs="+", required=True, help="Rollout directories, easiest tier first")
+    t.add_argument("--target", type=float, required=True)
+    t.add_argument("--size", type=int, default=1500)
+    t.add_argument("--out", required=True, help="JSON file for the result")
     arguments = parser.parse_args()
-    (calibrate if arguments.command == "calibrate" else merge)(arguments)
+    {"calibrate": calibrate, "merge": merge, "ladder": ladder}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

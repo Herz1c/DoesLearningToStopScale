@@ -1,6 +1,8 @@
 """Harder math training questions: MATH (Hendrycks et al.) train split, levels 3-5, integer answers.
 
     python stopping/math_tasks.py --train 1500 --val 100     # writes data/math_hard_train.jsonl, data/math_hard_val.jsonl
+    # next difficulty tier (level 5 only), disjoint from the pool above:
+    python stopping/math_tasks.py --levels 5 --prefix math_l5 --val 0 --exclude data/math_hard_train.jsonl data/math_hard_val.jsonl
 
 GSM8K is nearly saturated for Qwen3-1.7B (80% of questions answered right in 4 of 4 tries), so the
 math pool is mixed with these to give the same difficulty profile as GSM8K gave Qwen3-0.6B
@@ -22,7 +24,6 @@ from datasets import load_dataset
 INSTRUCTION = "Put the final answer on the last line, like: Final answer: 42"
 SUBJECTS = ("algebra", "counting_and_probability", "geometry", "intermediate_algebra", "number_theory",
             "prealgebra", "precalculus")
-LEVELS = {"Level 3", "Level 4", "Level 5"}
 
 
 def last_boxed(solution):
@@ -52,20 +53,30 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--train", type=int, default=1500)
     parser.add_argument("--val", type=int, default=100)
+    parser.add_argument("--levels", default="3,4,5", help="Comma-separated MATH levels to keep")
+    parser.add_argument("--prefix", default="math_hard", help="Writes data/<prefix>_train.jsonl and _val.jsonl")
+    parser.add_argument("--exclude", nargs="*", default=[], help="Pool files whose problems are left out")
     arguments = parser.parse_args()
+    levels = {f"Level {n}" for n in arguments.levels.split(",")}
+    used = {json.loads(line)["prompt"][0]["content"] for path in arguments.exclude
+            for line in Path(path).read_text().splitlines()}
     rows = []
     for subject in SUBJECTS:
         for r in load_dataset("EleutherAI/hendrycks_math", subject, split="train"):
             answer = integer(last_boxed(r["solution"]))
-            if r["level"] in LEVELS and answer is not None:
-                rows.append({"prompt": [{"role": "user", "content": f"{r['problem']}\n\n{INSTRUCTION}"}],
+            content = f"{r['problem']}\n\n{INSTRUCTION}"
+            if r["level"] in levels and answer is not None and content not in used:
+                rows.append({"prompt": [{"role": "user", "content": content}],
                              "answer": answer, "task": "math", "source": "math",
                              "level": r["level"], "type": r["type"]})
-    print(f"{len(rows)} MATH train problems, levels 3-5, integer answers", flush=True)
+    print(f"{len(rows)} MATH train problems, levels {arguments.levels}, integer answers"
+          f"{f', not in {len(used)} excluded prompts' if used else ''}", flush=True)
     random.Random(0).shuffle(rows)
     val, train = rows[:arguments.val], rows[arguments.val:arguments.val + arguments.train]
     Path("data").mkdir(exist_ok=True)
-    for name, part in (("math_hard_train", train), ("math_hard_val", val)):
+    for name, part in ((f"{arguments.prefix}_train", train), (f"{arguments.prefix}_val", val)):
+        if not part:
+            continue
         Path(f"data/{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in part))
         print(f"data/{name}.jsonl: {len(part)} rows")
 

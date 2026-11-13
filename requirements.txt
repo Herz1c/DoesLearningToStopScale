@@ -1,0 +1,22 @@
+# Versions the 0.6B and 1.7B studies ran with. vLLM pulls a matching torch and the CUDA stack.
+vllm==0.23.0
+# transformers 5 changed apply_chat_template(tokenize=True) to return a BatchEncoding, which vLLM cannot consume.
+transformers==4.57.1
+peft==0.17.1
+accelerate==1.10.1
+datasets>=3
+
+# EvalPlus (MBPP+ grading) imports these inside the sandbox
+appdirs
+termcolor
+wget
+tempdir
+multipledispatch
+tree-sitter
+tree-sitter-python
+
+# IFEval's verifiers
+absl-py
+langdetect
+nltk
+immutabledict

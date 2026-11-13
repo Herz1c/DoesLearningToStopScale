@@ -1,6 +1,9 @@
 """Function-calling tasks for stop-point distillation, from Glaive function-calling v2.
 
     python stopping/tool_tasks.py build --train 1500 --val 100   # writes data/tool_train.jsonl, data/tool_val.jsonl
+    # harder tiers for larger models (see "Harder tiers" below), from Glaive requests the first pool did not use:
+    python stopping/tool_tasks.py variants --tier wide --out data/tool_wide.jsonl --exclude data/tool_train.jsonl data/tool_val.jsonl
+    python stopping/tool_tasks.py variants --tier removed --out data/tool_removed.jsonl --exclude data/tool_train.jsonl data/tool_val.jsonl data/tool_wide.jsonl
 
 Source: glaiveai/glaive-function-calling-v2 (Apache-2.0). Each conversation offers one or
 more functions as JSON schemas. The first user turn and the first assistant turn give a
@@ -23,6 +26,21 @@ only; nothing is executed). A call is right when the names match and every argum
 the reference (numbers by value, strings ignoring case and surrounding space). No-call
 follows BFCL's rule: anything that is not a parseable call is correct. *knows* also accepts a
 reply wrapped in a code fence; *strict* asks for the bare list the evaluation expects.
+
+Harder tiers. Glaive offers one or two functions per request, which a larger model nearly always
+gets right. Two tiers raise the difficulty with Glaive material only:
+
+- wide (source "glaive_wide"): the same kind of task with 5 to 8 functions to choose from. The
+  extra functions come from other Glaive conversations.
+- removed (source "glaive_removed"): 6 to 10 functions, and the no-call tasks are call tasks whose
+  needed function was taken out of the list, so a sensible request meets a list in which nothing
+  fits. This is the case where the 1.7B model lost accuracy (it called something anyway).
+
+An added function must not fit the request, or the label would be wrong. The filter is lexical: a
+function is not added when its name or description shares a content word (compared on the first
+five letters, generic verbs such as "get" or "calculate" aside) with the request or with any
+function the conversation offered. It is a heuristic; the share of tasks the base model gets
+right on each tier is measured before the tier is used.
 """
 
 import argparse
@@ -173,14 +191,106 @@ def build(arguments):
         print(f"data/{name}.jsonl: {len(part)} rows ({sum(json.loads(r['answer']) is None for r in part)} no-call)")
 
 
+# ---------- harder tiers ----------
+
+GENERIC = {"get", "calculate", "search", "find", "generate", "create", "check", "convert", "send", "make", "add",
+           "given", "based", "specific", "specified", "particular", "provided", "information", "details", "value",
+           "number", "type", "name", "list", "data", "user", "function", "from", "with", "that", "this", "for",
+           "the", "and", "what", "please", "need", "want", "help", "could", "would", "like", "some", "have", "know"}
+SIZES = {"wide": (5, 8), "removed": (6, 10)}
+
+
+def content_words(text):
+    """Content words of a text or an identifier, cut to five letters so that inflections match."""
+    found = re.findall(r"[a-z]+", re.sub(r"([a-z])([A-Z])", r"\1 \2", text).lower())
+    return {w[:5] for w in found if len(w) >= 3 and w not in GENERIC}
+
+
+def function_words(function):
+    return content_words(function["name"]) | content_words(str(function.get("description", "")))
+
+
+def answer_text(target):
+    if target is None:
+        return "[]"
+    return f"[{target['name']}(" + ", ".join(f"{k}={v!r}" for k, v in target["arguments"].items()) + ")]"
+
+
+def variants(arguments):
+    from datasets import load_dataset
+    used = {json.loads(line)["prompt"][-1]["content"] for path in arguments.exclude
+            for line in Path(path).read_text().splitlines()}
+    calls, none, catalogue = [], [], {}
+    for sample in load_dataset("glaiveai/glaive-function-calling-v2", split="train"):
+        parsed = parse(sample)
+        if parsed is None:
+            continue
+        functions, user, target = parsed
+        for f in functions:
+            if f["name"].isidentifier():
+                catalogue.setdefault(f["name"], f)
+        if user and len(user) <= 1500 and user not in used:
+            used.add(user)      # Glaive repeats requests; one task per request text
+            (calls if target else none).append((functions, user, target))
+    catalogue = [(f, function_words(f)) for f in catalogue.values()]
+    print(f"{len(calls)} call tasks, {len(none)} no-call tasks not in the excluded pools; "
+          f"{len(catalogue)} distinct functions to add", flush=True)
+    rng = random.Random(arguments.seed)
+    rng.shuffle(calls)
+    rng.shuffle(none)
+    n_none = round(arguments.count * 0.3)
+    n_call = arguments.count - n_none
+    tasks = [(t, "call") for t in calls[:n_call]]
+    if arguments.tier == "removed":
+        tasks += [(t, "removed") for t in calls[n_call:arguments.count]]
+    else:
+        tasks += [(t, "no_call") for t in none[:n_none]]
+    low, high = SIZES[arguments.tier]
+    out = []
+    for (functions, user, target), kind in tasks:
+        blocked = content_words(user) | {w for f in functions for w in function_words(f)}
+        if kind == "removed":
+            functions, target = [f for f in functions if f["name"] != target["name"]], None
+        names = {f["name"] for f in functions}
+        extra, want = [], rng.randint(low, high) - len(functions)
+        for index in rng.sample(range(len(catalogue)), len(catalogue)):
+            if len(extra) >= want:
+                break
+            f, words = catalogue[index]
+            if f["name"] not in names and not words & blocked:
+                extra.append(f)
+                names.add(f["name"])
+                blocked |= content_words(f["name"])     # the added functions differ from each other too
+        offered = functions + extra
+        rng.shuffle(offered)
+        row = {"prompt": [{"role": "system", "content": SYSTEM.format(functions=json.dumps(offered, indent=4))},
+                          {"role": "user", "content": user}],
+               "answer": json.dumps(target), "task": "tool", "source": f"glaive_{arguments.tier}",
+               "variant": kind, "functions": len(offered)}
+        assert grade_tool(row, "</think>\n\n" + answer_text(target)) == (True, True), row["answer"]
+        out.append(row)
+    rng.shuffle(out)
+    Path(arguments.out).parent.mkdir(exist_ok=True)
+    Path(arguments.out).write_text("".join(json.dumps(r) + "\n" for r in out))
+    kinds = {k: sum(r["variant"] == k for r in out) for k in ("call", "no_call", "removed")}
+    print(f"{arguments.out}: {len(out)} rows {kinds}, "
+          f"{sum(r['functions'] for r in out) / len(out):.1f} functions per task")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build")
     b.add_argument("--train", type=int, default=1500)
     b.add_argument("--val", type=int, default=100)
+    v = sub.add_parser("variants")
+    v.add_argument("--tier", choices=sorted(SIZES), required=True)
+    v.add_argument("--out", required=True)
+    v.add_argument("--count", type=int, default=1600)
+    v.add_argument("--seed", type=int, default=1)
+    v.add_argument("--exclude", nargs="*", default=[], help="Pool files whose requests are left out")
     arguments = parser.parse_args()
-    build(arguments)
+    (build if arguments.command == "build" else variants)(arguments)
 
 
 if __name__ == "__main__":
