@@ -27,6 +27,7 @@ GPU_MEMORY = 0.85
 REVISIONS = {
     "Qwen/Qwen3-0.6B": "c1899de289a04d12100db370d81485cdf75e47ca",
     "Qwen/Qwen3-1.7B": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+    "Qwen/Qwen3-4B": "1cfa9a7208912126459214e8b04321603b3df60c",
 }
 
 # What each benchmark's question says around the benchmark's own text. Changing a word changes

@@ -58,6 +58,15 @@ WRAPPERS = {
 WRAP_COMPANIONS = ("no_digits", "emojis", "table")
 EMOJI = re.compile("[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F2FF]")
 TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+# Emoji, emphasis marks and blanks after the last sentence. "…in Ireland! 🎉" ends with an exclamation
+# mark and "…do you prefer? 🤔" with a question; before 2026-11-14 the two end-of-reply checks read the
+# very last character and failed both (seen in the 4B calibration, where they are combined with `emojis`).
+TRAILING = re.compile("(?:[\\s*_`~️‍]|" + EMOJI.pattern + ")+$")
+
+
+def sentence_end(reply):
+    """The reply without what may follow its last sentence: emoji, emphasis marks, blanks."""
+    return TRAILING.sub("", reply.strip())
 
 
 def check(constraint, reply):
@@ -72,7 +81,7 @@ def check(constraint, reply):
     if kind == "no_digits":
         return not re.search(r"\d", reply)
     if kind == "exclaim":
-        body = re.sub(r"https?://\S+", "", reply).strip()
+        body = sentence_end(re.sub(r"https?://\S+", "", reply))
         return body.endswith("!") and not re.search(r"[A-Za-z)\"'][.?](\s|$)", body)
     if kind == "table":
         lines = [l for l in reply.splitlines() if l.strip()]
@@ -81,7 +90,7 @@ def check(constraint, reply):
     if kind == "emojis":
         return len(EMOJI.findall(reply)) >= constraint["n"]
     if kind == "end_question":
-        return reply.strip().rstrip("*_ ").endswith("?")
+        return sentence_end(reply).endswith("?")
     raise ValueError(kind)
 
 

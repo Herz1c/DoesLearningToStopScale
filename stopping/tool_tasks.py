@@ -4,6 +4,8 @@
     # harder tiers for larger models (see "Harder tiers" below), from Glaive requests the first pool did not use:
     python stopping/tool_tasks.py variants --tier wide --out data/tool_wide.jsonl --exclude data/tool_train.jsonl data/tool_val.jsonl
     python stopping/tool_tasks.py variants --tier removed --out data/tool_removed.jsonl --exclude data/tool_train.jsonl data/tool_val.jsonl data/tool_wide.jsonl
+    # pools built before 2026-11-14 carry a labelling error in their no-call tasks (see `relabel`):
+    python stopping/tool_tasks.py relabel --pool data/tool_wide.jsonl --out data/tool_wide_fixed.jsonl
 
 Source: glaiveai/glaive-function-calling-v2 (Apache-2.0). Each conversation offers one or
 more functions as JSON schemas. The first user turn and the first assistant turn give a
@@ -106,8 +108,10 @@ def grade_tool(row, text):
 
 # ---------- data ----------
 
-def parse(sample):
-    """A Glaive sample -> (functions, user turn, target) or None."""
+def parse(sample, first_turn_only=False):
+    """A Glaive sample -> (functions, user turn, target) or None.
+
+    first_turn_only=True reads the labels as the pools built before 2026-11-14 did (see `relabel`)."""
     system = sample["system"].removeprefix("SYSTEM:").strip()
     start = system.find("{")
     if start < 0:
@@ -128,7 +132,16 @@ def parse(sample):
     pairs = [(turns[i], turns[i + 1].replace("<|endoftext|>", "").strip()) for i in range(1, len(turns) - 1, 2)]
     if len(pairs) < 2 or pairs[0][0] != "USER:" or pairs[1][0] != "ASSISTANT:":
         return None
-    user, reply = pairs[0][1], pairs[1][1]
+    user = pairs[0][1]
+    # The assistant often announces the call in one turn ("Sure, let me calculate that for you.") and
+    # makes it in the next. Reading only the first turn labelled those tasks "no call" (found in the 4B
+    # calibration, 2026-11-14: 7 825 of Glaive's 40 595 first turns without a call are of this kind).
+    replies = []
+    for role, text in pairs[1:]:
+        if role != "ASSISTANT:":
+            break
+        replies.append(text)
+    reply = replies[0] if first_turn_only else next((text for text in replies if CALL.search(text)), replies[0])
     call = CALL.search(reply)
     if call:
         # Glaive writes the arguments as a single-quoted JSON string inside the call object,
@@ -277,9 +290,52 @@ def variants(arguments):
           f"{sum(r['functions'] for r in out) / len(out):.1f} functions per task")
 
 
+def offered_names(row):
+    return {f["name"] for f in json.loads(row["prompt"][0]["content"].split("Functions (JSON):\n", 1)[1])}
+
+
+def relabel(arguments):
+    """Corrects a pool built with the first-turn-only labels: a no-call task whose Glaive conversation
+    makes the call one assistant turn later gets that call as its target. A request that Glaive has
+    both ways (one conversation calls, another with the same functions does not) is dropped."""
+    from datasets import load_dataset
+    seen = {}
+    for sample in load_dataset("glaiveai/glaive-function-calling-v2", split="train"):
+        old = parse(sample, first_turn_only=True)
+        if old is None or old[2] is not None:
+            continue
+        new = parse(sample)
+        seen.setdefault(old[1], []).append((frozenset(f["name"] for f in old[0]), new[2] if new else None))
+    rows = [json.loads(line) for line in Path(arguments.pool).read_text().splitlines()]
+    out, count = [], {"kept": 0, "relabelled to a call": 0, "dropped, Glaive has it both ways": 0}
+    for row in rows:
+        if json.loads(row["answer"]) is None and row.get("variant") != "removed":
+            names = offered_names(row)
+            targets = [t for functions, t in seen.get(row["prompt"][-1]["content"], []) if functions <= names]
+            called = [t for t in targets if t is not None]
+            if called and len(called) < len(targets):
+                count["dropped, Glaive has it both ways"] += 1
+                continue
+            if called:
+                row = dict(row, answer=json.dumps(called[0]))
+                if "variant" in row:
+                    row["variant"] = "call"
+                count["relabelled to a call"] += 1
+                assert grade_tool(row, "</think>\n\n" + answer_text(called[0])) == (True, True), row["answer"]
+            else:
+                count["kept"] += 1
+        out.append(row)
+    Path(arguments.out).write_text("".join(json.dumps(r) + "\n" for r in out))
+    print(f"{arguments.pool}: no-call tasks {count}; {arguments.out}: {len(out)} rows, "
+          f"{sum(json.loads(r['answer']) is None for r in out)} no-call")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
+    r = sub.add_parser("relabel")
+    r.add_argument("--pool", required=True)
+    r.add_argument("--out", required=True)
     b = sub.add_parser("build")
     b.add_argument("--train", type=int, default=1500)
     b.add_argument("--val", type=int, default=100)
@@ -290,7 +346,7 @@ def main():
     v.add_argument("--seed", type=int, default=1)
     v.add_argument("--exclude", nargs="*", default=[], help="Pool files whose requests are left out")
     arguments = parser.parse_args()
-    (build if arguments.command == "build" else variants)(arguments)
+    {"build": build, "variants": variants, "relabel": relabel}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

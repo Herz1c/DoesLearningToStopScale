@@ -45,10 +45,9 @@ else
 fi
 
 echo "== Data"
-for f in train code_train code_hard_train code_hardest_train math_hard_train math_l5_train tool_train_clean tool_wide \
-         tool_removed constraint_train constraint_c3 constraint_c4; do
+for f in pool4b_math pool4b_code pool4b_tool pool4b_constraint; do
     if [ -s "data/$f.jsonl" ]; then ok "data/$f.jsonl ($(wc -l < "data/$f.jsonl") rows)"; else bad "data/$f.jsonl missing (unpack the data archive into the repository)"; fi
 done
 
 echo
-if [ -z "$FAILED" ]; then echo "SETUP OK - next: bash chains/calibrate_4b.sh"; else echo "SETUP INCOMPLETE - see FAIL lines above"; exit 1; fi
+if [ -z "$FAILED" ]; then echo "SETUP OK"; else echo "SETUP INCOMPLETE - see FAIL lines above"; exit 1; fi
