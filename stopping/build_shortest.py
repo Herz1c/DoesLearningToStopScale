@@ -15,7 +15,13 @@ Hard MATH questions (source "math", Amendment 2b in the research log): Qwen3-1.7
 with a display `\\boxed{N}` instead of the requested "Final answer: N" line, so almost none pass the strict
 grader. For these, when no rollout passes strictly, the shortest finished rollout that knows the answer is
 used with only its closing `\\boxed{N}` line replaced by "Final answer: N" (thinking untouched, the rest of
-the answer kept), and the result must pass the strict grader. Other sources are unchanged.
+the answer kept), and the result must pass the strict grader.
+
+From the 4B study on this covers every math question (GSM8K too), and a decorated closing line
+("Final answer: $42$", "**Final answer:** 42.") is rewritten the same way: the strict grade of a math
+answer is now the bare line "Final answer: N" (stopping/answers.py, is_plain_correct), so that every
+math training row ends in exactly the form the prompt asks for. Regrade old rollout files first
+(stopping/regrade_rollouts.py) so that their stored `correct` is this grade.
 """
 
 import argparse
@@ -28,26 +34,29 @@ import statistics
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from stopping.answers import clean_answer, is_task_correct  # noqa: E402
+from stopping.answers import clean_answer, same_number  # noqa: E402
+from stopping.grading import grade  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")
-NORMALIZE_SOURCES = {"math"}
 # A closing line that holds only the boxed value, optionally in $ or $$ (also on lines of their own) and a period.
 CLOSING_BOXED = re.compile(r"(?:^\$\$[ \t]*\n)?^[ \t]*\$*[ \t]*\\boxed\{([^{}]*)\}[ \t]*\$*[ \t]*\.?[ \t]*"
                            r"(?:\n\$\$[ \t]*)?\s*\Z", re.M)
 FINAL_HEADING = re.compile(r"\n+#+[ \t]*\**Final Answer\**:?[ \t]*\Z", re.I)
+# A closing "Final answer:" line whose value is decorated (emphasis marks, $, a box, a trailing period).
+CLOSING_FINAL = re.compile(r"^[ \t]*\**Final answer:\**[ \t]*([^\n]+?)[ \t]*\Z", re.M)
 
 
 def normalized_answer(answer, gold):
     """Answer text ending in a boxed line -> the same text ending in 'Final answer: N', or None."""
-    match = CLOSING_BOXED.search(answer.rstrip())
+    answer = answer.rstrip()
+    match = CLOSING_BOXED.search(answer) or CLOSING_FINAL.search(answer)
     if not match:
         return None
-    value = clean_answer(match.group(1).strip())
-    if value != gold:
+    value = clean_answer(match.group(1).strip().replace("**", ""))
+    if not same_number(value, gold):
         return None
-    head = FINAL_HEADING.sub("", answer.rstrip()[:match.start()].rstrip())
-    return f"{head}\n\nFinal answer: {value}"
+    head = FINAL_HEADING.sub("", answer[:match.start()].rstrip())
+    return f"{head}\n\nFinal answer: {gold}".lstrip()
 
 
 def normalized_ids(row, tokenizer, close_id):
@@ -62,7 +71,7 @@ def normalized_ids(row, tokenizer, close_id):
         return None
     new = ids[:cut] + tokenizer.encode(fixed, add_special_tokens=False) + ending
     text = tokenizer.decode(new, skip_special_tokens=True)
-    return new if is_task_correct(text, row["answer"], "math") else None
+    return new if grade([(row, text)])[0][0] else None
 
 
 def main():
@@ -84,7 +93,7 @@ def main():
         if good:
             best = min(good, key=lambda r: r["tokens"])
             ids = best["token_ids"]
-        elif rows[0]["source"] in NORMALIZE_SOURCES:
+        elif rows[0]["task"] == "math":
             if tokenizer is None:
                 from transformers import AutoTokenizer
                 tokenizer = AutoTokenizer.from_pretrained(MODEL)
@@ -106,7 +115,7 @@ def main():
     arguments.out.write_text("".join(json.dumps(r) + "\n" for r in chosen))
     picked = [r["tokens"] for r in chosen]
     print(f"{len(chosen)} of {len(by_question)} questions have a correct, finished rollout "
-          f"({normalized} of them hard MATH with the closing boxed line normalised)")
+          f"({normalized} of them with the closing line rewritten to 'Final answer: N')")
     print(f"chosen: mean {statistics.mean(picked):.0f} tokens, median {statistics.median(picked):.0f}; "
           f"all rollouts of those questions: mean {statistics.mean(mean_lengths):.0f}")
     print(f"wrote {arguments.out}")

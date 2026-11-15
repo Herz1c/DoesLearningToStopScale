@@ -45,7 +45,7 @@ else
 fi
 
 echo "== Data"
-for f in pool4b_math pool4b_code pool4b_tool pool4b_constraint; do
+for f in pool4b_math pool4b_code pool4b_tool pool4b_constraint wrapper_train; do
     if [ -s "data/$f.jsonl" ]; then ok "data/$f.jsonl ($(wc -l < "data/$f.jsonl") rows)"; else bad "data/$f.jsonl missing (unpack the data archive into the repository)"; fi
 done
 

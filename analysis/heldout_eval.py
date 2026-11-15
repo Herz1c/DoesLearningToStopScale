@@ -29,6 +29,9 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# The held-out math sets keep the forgiving strict grade of the 0.6B and 1.7B studies, so that every
+# size and every base/trained pair is graded alike (training uses the bare-number grade from 4B on).
+os.environ["MATH_STRICT"] = "legacy"
 from stopping.grading import grade  # noqa: E402
 from evaluation.protocol import SAMPLING  # noqa: E402
 
@@ -75,6 +78,8 @@ def run(arguments):
               enable_lora=rank is not None, max_lora_rank=rank or 16)
     lora = LoRARequest("candidate", 1, str(arguments.adapter.resolve())) if arguments.adapter else None
     rows = questions(sets=arguments.sets.split(","))
+    if arguments.limit:
+        rows = [r for k, r in enumerate(rows) if sum(q["set"] == r["set"] for q in rows[:k]) < arguments.limit]
     records = []
     for group in ({"humaneval"}, {"gsm8k_test"}, {"math500"}):
         part = [r for r in rows if r["set"] in group]
@@ -131,6 +136,7 @@ def main():
     parser.add_argument("--adapter", type=Path)
     parser.add_argument("--compare", nargs=2, type=Path)
     parser.add_argument("--sets", default=",".join(SETS), help=f"Comma-separated subset of {', '.join(SETS)}")
+    parser.add_argument("--limit", type=int, help="Only the first N questions of each set (plumbing test)")
     arguments = parser.parse_args()
     if arguments.compare:
         compare(*arguments.compare)

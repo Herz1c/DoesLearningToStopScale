@@ -11,11 +11,16 @@ strict additionally requiring the bare call list (stopping/tool_tasks.py). Code 
 one parallel sandboxed batch, which is why this takes a list instead of one answer at a time.
 """
 
+import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from stopping.answers import is_task_correct, knows  # noqa: E402
+from stopping.answers import is_plain_correct, is_task_correct, knows  # noqa: E402
+
+# Math: strict means the bare closing line "Final answer: N" (stopping/answers.py, is_plain_correct).
+# The 0.6B and 1.7B studies used the forgiving check; MATH_STRICT=legacy brings it back to reproduce them.
+LEGACY_MATH = os.environ.get("MATH_STRICT") == "legacy"
 
 
 def grade(pairs):
@@ -28,6 +33,8 @@ def grade(pairs):
         elif row["task"] == "constraint":
             from stopping.constraint_tasks import grade_constraint
             results[k] = grade_constraint(row, text)
+        elif row["task"] == "math" and not LEGACY_MATH:
+            results[k] = (is_plain_correct(text, row["answer"]), knows(text, row["answer"], "math"))
         elif row["task"] != "code":
             results[k] = (is_task_correct(text, row["answer"], row["task"]),
                           knows(text, row["answer"], row["task"]))

@@ -80,6 +80,23 @@ def is_task_correct(completion, gold, task):
     return value is not None and matches(clean_answer(value), gold, task)
 
 
+_PLAIN_NUMBER = re.compile(r"[+-]?(\d+|\d{1,3}(,\d{3})+)(\.\d+)?")
+
+
+def is_plain_correct(completion, gold):
+    """Strict in the narrow sense: the thinking is closed exactly once, the reply's last line is
+    'Final answer: N' and N is a bare number (no \\boxed{}, $, unit, expression or trailing period).
+
+    This is what "Put the final answer on the last line, like: Final answer: 42" literally asks for.
+    `is_task_correct` forgives decorations; the 1.7B model then picked up decorated closing lines
+    ("Final answer: 5 + 3 = 8", a second </think>), which a grader that wants the number alone
+    rejects. From the 4B study on, the strict grade of a math answer is this one (stopping/grading.py)."""
+    if completion.count("</think>") > 1:
+        return False
+    value = final_answer(completion.split("</think>")[-1])
+    return value is not None and _PLAIN_NUMBER.fullmatch(value) is not None and same_number(value, gold)
+
+
 def knows(completion, gold, task):
     response = completion.split("</think>")[-1].replace("**", "")
     finals, boxed = _ANY_FINAL.findall(response), _BOXED.findall(response)

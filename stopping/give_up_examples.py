@@ -47,8 +47,8 @@ def well_formed(row, text):
         from stopping.code_tasks import strict_code
         code = strict_code(text)
         return code is not None and f"def {row['entry_point']}" in code
-    predicted = final_answer(text.replace("**", ""))
-    return predicted is not None and bool(NUMBER.fullmatch(predicted.strip().rstrip(".")))
+    predicted = final_answer(text)       # a bare number: no emphasis marks, no trailing period
+    return predicted is not None and bool(NUMBER.fullmatch(predicted.strip()))
 
 
 def main():
