@@ -19,7 +19,7 @@ OUT = REPO / "runs" / "4b"
 LOG = REPO / "generate_4b.log"
 POOLS = {"math": 1500, "code": 1500, "tool": 1500, "constraint": 1600}
 ROLLOUT_TARGET = 4 * sum(POOLS.values())          # 24 400 rollouts
-HELDOUT_TARGET = 164 * 4 + 500 * 2 + 500 * 4      # 3 656 records
+HELDOUT_TARGET = 164 * 4 + 500 * 2 + 313 * 4      # 2 908 records (MATH-500: 313 whole-number answers)
 STAGES = ["rollouts", "base", "heldout"]
 
 run = wandb.init(project="qwen4b-step2", name="step2-" + time.strftime("%Y%m%d-%H%M%S"),
