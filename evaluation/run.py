@@ -93,6 +93,9 @@ def parse_args():
 
 
 def generate(questions, args, out):
+    # As in stopping/generate_rollouts.py: FlashInfer's sampler compiles a kernel with nvcc,
+    # which driver-only machines do not have. The PyTorch sampler needs no toolchain.
+    os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
