@@ -48,8 +48,14 @@ from stopping.grading import grade  # noqa: E402
 from evaluation.protocol import SAMPLING  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
-THINK_CLOSE = 151668        # </think>
-DOUBLE_NEWLINE = 271        # "\n\n", which the model writes right after </think>
+THINK_CLOSE = 151668        # </think>                                              (Qwen3 tokenizer)
+DOUBLE_NEWLINE = 271        # "\n\n", which the model writes right after </think>   (Qwen3 tokenizer)
+if not MODEL.startswith("Qwen/Qwen3-"):     # another tokenizer: ask it
+    from transformers import AutoTokenizer as _AutoTokenizer
+    from evaluation import chat as _chat
+    _tokenizer = _AutoTokenizer.from_pretrained(MODEL)
+    THINK_CLOSE = _chat.think_ids(_tokenizer)[1]
+    (DOUBLE_NEWLINE,) = _chat.blank_line_ids(_tokenizer)      # must be one token, as in Qwen3
 PROBE_SAMPLES = 2
 VERIFY_SAMPLES = 4
 VERIFY_NEEDED = 3
@@ -143,8 +149,10 @@ def main():
         state_path.write_text(json.dumps({"lo": lo, "hi": hi, "rounds": rounds,
                                           "answers": {f"{a}:{b}": v for (a, b), v in answers.items()}}))
 
+    from evaluation.chat import engine_options
     llm = LLM(model=MODEL, enable_prefix_caching=True, gpu_memory_utilization=0.85,
-              max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed)
+              max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed,
+              **engine_options(MODEL))
 
     def sample(jobs, n):
         """jobs: [(rollout index, cut index)] -> stores n more answers for each."""

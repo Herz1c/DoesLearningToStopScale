@@ -87,8 +87,10 @@ def main():
           f"({sum(not r['finished'] for r, _ in chosen)} capped)", flush=True)
 
     from vllm import LLM, SamplingParams
+    from evaluation.chat import engine_options
     llm = LLM(model=MODEL, enable_prefix_caching=True, gpu_memory_utilization=0.85,
-              max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed)
+              max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed,
+              **engine_options(MODEL))
     prompts = []
     for r, cut in chosen:
         ids = tokenizer.apply_chat_template(r["prompt"], tokenize=True, add_generation_prompt=True, enable_thinking=True)

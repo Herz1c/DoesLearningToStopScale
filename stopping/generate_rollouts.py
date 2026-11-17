@@ -92,9 +92,10 @@ def main():
     rank = None
     if arguments.adapter:
         rank = json.loads((arguments.adapter / "adapter_config.json").read_text())["r"]
+    from evaluation.chat import engine_options
     llm = LLM(model=MODEL, enable_prefix_caching=True, gpu_memory_utilization=0.85,
               max_model_len=arguments.max_tokens + 1024, seed=arguments.seed,
-              enable_lora=rank is not None, max_lora_rank=rank or 16)
+              enable_lora=rank is not None, max_lora_rank=rank or 16, **engine_options(MODEL))
     lora = LoRARequest("candidate", 1, str(arguments.adapter.resolve())) if arguments.adapter else None
     params = SamplingParams(**SAMPLING, n=arguments.samples, max_tokens=arguments.max_tokens, seed=arguments.seed)
 

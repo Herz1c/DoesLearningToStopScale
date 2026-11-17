@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["MATH_STRICT"] = "legacy"
 from stopping.grading import grade  # noqa: E402
 from evaluation.protocol import SAMPLING  # noqa: E402
+from evaluation.chat import engine_options  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 CODE_PROMPT = ("Complete the following Python function. Give the complete function, including the signature, "
@@ -75,7 +76,7 @@ def run(arguments):
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     rank = json.loads((arguments.adapter / "adapter_config.json").read_text())["r"] if arguments.adapter else None
     llm = LLM(model=MODEL, gpu_memory_utilization=0.85, max_model_len=8192 + 1024, seed=9001,
-              enable_lora=rank is not None, max_lora_rank=rank or 16)
+              enable_lora=rank is not None, max_lora_rank=rank or 16, **engine_options(MODEL))
     lora = LoRARequest("candidate", 1, str(arguments.adapter.resolve())) if arguments.adapter else None
     rows = questions(sets=arguments.sets.split(","))
     if arguments.limit:

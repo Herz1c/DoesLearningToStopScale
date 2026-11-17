@@ -24,6 +24,7 @@ R=runs/27b_probe
 mkdir -p $R
 stamp() { echo "[$(date '+%m-%d %H:%M:%S')] $*"; }
 has() { case " $PARTS " in *" $1 "*) return 0;; esac; return 1; }
+source chains/gpu_wait.sh
 
 stamp "probe start: model $BASE_MODEL, parts: $PARTS"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
@@ -61,6 +62,7 @@ part() {
     local label=$1 name=$2; shift 2
     stamp "$label start"
     local start; start=$(date +%s)
+    settle
     "$@" > $R/$name.log 2>&1 < /dev/null
     if [ -s $R/$name.json ] && ! grep -q '"failed"' $R/$name.json; then
         stamp "$label done in $(( ($(date +%s) - start) / 60 )) min"

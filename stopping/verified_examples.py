@@ -149,8 +149,10 @@ def main():
                 ids = tokenizer.apply_chat_template(rows[i]["prompt"], tokenize=True, add_generation_prompt=True,
                                                     enable_thinking=True)
                 prompts[q] = list(ids["input_ids"] if hasattr(ids, "input_ids") else ids)
+        from evaluation.chat import engine_options
         llm = LLM(model=MODEL, enable_prefix_caching=True, gpu_memory_utilization=0.85,
-                  max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed)
+                  max_model_len=arguments.max_rollout_tokens + 1024 + arguments.answer_tokens, seed=arguments.seed,
+                  **engine_options(MODEL))
         for step in range(MAX_STEPS):
             jobs = [i for i in pending if pending[i] < len(cuts_of[i])]
             if not jobs:

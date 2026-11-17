@@ -19,7 +19,7 @@ import json
 import os
 from pathlib import Path
 
-from evaluation import graders, protocol, sources
+from evaluation import chat, graders, protocol, sources
 from evaluation.execution import run_programs
 from evaluation.stats import interval, summarize
 
@@ -103,11 +103,12 @@ def generate(questions, args, out):
     tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.revision)
     eos = tokenizer.eos_token_id
     eos_ids = list(eos) if isinstance(eos, list) else [eos]
-    open_id, close_id = tokenizer.convert_tokens_to_ids(["<think>", "</think>"])
+    open_id, close_id = chat.think_ids(tokenizer)
+    # Qwen3.5 family: the template has already written <think>, the reply starts inside the thinking.
+    opened = chat.prompt_opens_thinking(tokenizer)
     jobs = []
     for q in questions:
-        ids = tokenizer.apply_chat_template(q["messages"], tokenize=True, add_generation_prompt=True,
-                                            enable_thinking=True)
+        ids = chat.prompt_ids(tokenizer, q["messages"])
         if len(ids) > protocol.PROMPT_ROOM:
             raise SystemExit(f"question {q['id']} is {len(ids)} tokens, over the prompt room")
         for sample in range(args.samples):
@@ -126,7 +127,7 @@ def generate(questions, args, out):
     llm = LLM(model=args.model, revision=args.revision, tokenizer_revision=args.revision,
               max_model_len=max(caps) + protocol.PROMPT_ROOM, gpu_memory_utilization=protocol.GPU_MEMORY,
               enable_prefix_caching=False, generation_config="vllm", seed=args.seed,
-              enable_lora=rank is not None, max_lora_rank=rank or 16)
+              enable_lora=rank is not None, max_lora_rank=rank or 16, **chat.engine_options(args.model))
     lora = LoRARequest("adapter", 1, str(Path(args.adapter).resolve())) if args.adapter else None
     with (out / RECORDS).open("w") as stream:
         for record in records:
@@ -142,11 +143,15 @@ def generate(questions, args, out):
                 if (output.lora_request is None) != (lora is None):
                     raise RuntimeError("adapter was not applied as requested")
                 tokens = list(output.outputs[0].token_ids)
-                answer, reasoning, error = graders.split_reply(tokens, open_id, close_id, set(eos_ids))
+                # The split and the graders see the whole reply, "<think> ... </think> answer"; the tag the
+                # template wrote is put back for them and is not counted as a generated token.
+                whole = [open_id] + tokens if opened and tokens[:1] != [open_id] else tokens
+                answer, reasoning, error = graders.split_reply(whole, open_id, close_id, set(eos_ids))
+                reasoning -= len(whole) - len(tokens)
                 record = {"id": q["id"], "dataset": q["dataset"], "sample_index": sample, "seed": seed,
                           "output_tokens": len(tokens), "reasoning_tokens": reasoning,
                           "truncated": not (tokens and tokens[-1] in eos_ids), "boundary_error": error,
-                          "text": tokenizer.decode(tokens, skip_special_tokens=True),
+                          "text": chat.whole_reply(tokenizer, tokenizer.decode(tokens, skip_special_tokens=True)),
                           "response": tokenizer.decode(answer, skip_special_tokens=True)}
                 records.append(record)
                 stream.write(json.dumps(record) + "\n")

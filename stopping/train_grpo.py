@@ -112,8 +112,10 @@ def main():
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
     rank = json.loads((arguments.init / "adapter_config.json").read_text())["r"]
+    from evaluation.chat import engine_options
     llm = LLM(model=MODEL, gpu_memory_utilization=arguments.vllm_memory, max_model_len=6144 + 1024,
-              enable_lora=True, max_lora_rank=rank, max_loras=1, max_cpu_loras=2, seed=arguments.seed)
+              enable_lora=True, max_lora_rank=rank, max_loras=1, max_cpu_loras=2, seed=arguments.seed,
+              **engine_options(MODEL))
 
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
