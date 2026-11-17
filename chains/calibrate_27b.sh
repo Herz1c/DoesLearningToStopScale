@@ -7,8 +7,8 @@
 #     tail -f calibrate_27b.log
 #
 # Needs: the environment .venv27 that chains/probe_27b.sh built, the tier files of qwen27b_calibration.tar.gz
-# unpacked in the repository (data/...), and bubblewrap (bwrap) for the code domain - without it the code
-# domain is skipped and the other three still run.
+# unpacked in the repository (data/...). Without bubblewrap (bwrap) the code domain is generated but not graded
+# here (its table rows read 0%); it is graded afterwards from the rollouts in the result archive.
 # Safe to stop and start again: finished questions are kept, each run continues where it stopped.
 # Optional environment:
 #     BASE_MODEL=Qwen/Qwen3.8-27B  the model (default)
@@ -57,8 +57,9 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "code at commit $(git rev-parse --short HEAD 2>/dev/null)"; git status --short 2>/dev/null | head -5
 echo "$RUNS" | while read -r domain tier data source cap; do [ -n "$data" ] && [ ! -s "$data" ] && echo "WARNING: $data is missing"; done
 if ! bwrap --unshare-all --ro-bind / / true 2>/dev/null; then
-    echo "WARNING: bubblewrap (bwrap) cannot start a sandbox here: the code domain is skipped (its answers cannot be run safely)"
-    ONLY=$(echo " $ONLY " | sed 's/ code / /')
+    echo "NOTE: bubblewrap (bwrap) cannot start a sandbox here, so model-written code cannot be run on this machine."
+    echo "      The code domain is still generated; its answers are graded later, elsewhere, from the saved rollouts."
+    echo "      Until then the code rows of the table below read 0% and mean nothing."
 fi
 # Two cards: SPLIT_GPUS="0 1" runs the code domain on the first card and the other three on the second, side by
 # side (they are about equal in work), each with its own log, then the mixing rule and the summary once.
