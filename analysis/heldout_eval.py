@@ -3,6 +3,7 @@
     python analysis/heldout_eval.py --out runs/heldout/base
     python analysis/heldout_eval.py --out runs/heldout/stoppoint_mixG --adapter checkpoints/stoppoint_mixG
     python analysis/heldout_eval.py --compare runs/heldout/base runs/heldout/stoppoint_mixG
+    python analysis/heldout_eval.py --regrade runs/heldout/base    # replies from a machine without a sandbox
 
 Every design decision of this project was made while looking at the four evaluation benchmarks,
 so their numbers can be flattered by selection even though nothing was trained on them. This
@@ -34,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["MATH_STRICT"] = "legacy"
 from stopping.grading import grade  # noqa: E402
 from evaluation.protocol import SAMPLING  # noqa: E402
-from evaluation.chat import engine_options  # noqa: E402
+from evaluation.chat import engine_options, whole_reply  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-0.6B")    # e.g. BASE_MODEL=Qwen/Qwen3-1.7B
 CODE_PROMPT = ("Complete the following Python function. Give the complete function, including the signature, "
@@ -91,17 +92,38 @@ def run(arguments):
                                                  enable_thinking=True) for r in part]
         for r, result in zip(part, llm.generate(prompts, params, lora_request=lora)):
             for k, o in enumerate(result.outputs):
-                text = tokenizer.decode(list(o.token_ids), skip_special_tokens=True)
+                text = whole_reply(tokenizer, tokenizer.decode(list(o.token_ids), skip_special_tokens=True))
                 records.append({"set": r["set"], "id": r["id"], "level": r.get("level"), "sample": k,
                                 "tokens": len(o.token_ids),
                                 "truncated": o.finish_reason == "length", "row": r, "text": text})
-    verdicts = grade([(rec["row"], rec["text"]) for rec in records])
     arguments.out.mkdir(parents=True, exist_ok=True)
-    with (arguments.out / "records.jsonl").open("w") as stream:
-        for rec, (strict, knows) in zip(records, verdicts):
-            rec.pop("row")
-            stream.write(json.dumps(rec | {"correct": strict, "knows": knows}) + "\n")
-    print(f"wrote {len(records)} records to {arguments.out}")
+    write(arguments.out, records)
+
+
+def write(out, records):
+    """Grades the replies and writes them. Without a sandbox the code replies cannot be run: they are
+    written ungraded (correct and knows null) and graded later with --regrade on a machine that has one."""
+    from stopping.code_tasks import sandbox_works
+    runnable = sandbox_works()
+    graded = [rec for rec in records if runnable or rec["row"]["task"] != "code"]
+    verdicts = dict(zip(map(id, graded), grade([(rec["row"], rec["text"]) for rec in graded])))
+    with (out / "records.jsonl").open("w") as stream:
+        for rec in records:
+            strict, knows = verdicts.get(id(rec), (None, None))
+            stream.write(json.dumps({k: v for k, v in rec.items() if k != "row"}
+                                    | {"correct": strict, "knows": knows}) + "\n")
+    ungraded = len(records) - len(graded)
+    print(f"wrote {len(records)} records to {out}" + (f" ({ungraded} code replies NOT graded: no sandbox here, "
+          f"grade them with --regrade {out})" if ungraded else ""))
+
+
+def regrade(out):
+    """Grades the stored replies of a run again (the questions are rebuilt from the datasets by id)."""
+    records = [json.loads(line) for line in (out / "records.jsonl").read_text().splitlines()]
+    rows = {(r["set"], r["id"]): r for r in questions(sets={rec["set"] for rec in records})}
+    for rec in records:
+        rec["row"] = rows[rec["set"], rec["id"]]
+    write(out, records)
 
 
 def compare(base_dir, mine_dir, resamples=2000):
@@ -136,16 +158,19 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--adapter", type=Path)
     parser.add_argument("--compare", nargs=2, type=Path)
+    parser.add_argument("--regrade", type=Path, help="Grade the stored replies of this run directory again")
     parser.add_argument("--sets", default=",".join(SETS), help=f"Comma-separated subset of {', '.join(SETS)}")
     parser.add_argument("--limit", type=int, help="Only the first N questions of each set (plumbing test)")
     arguments = parser.parse_args()
     if arguments.compare:
         compare(*arguments.compare)
+    elif arguments.regrade:
+        regrade(arguments.regrade)
     else:
         run(arguments)
 
 
 if __name__ == "__main__":
     main()
-    sys.stdout.flush()
-    os._exit(0)
+    from evaluation.chat import leave
+    leave()     # stops the vLLM engine and exits; its own teardown can hang after outputs are written

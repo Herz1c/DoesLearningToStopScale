@@ -86,6 +86,16 @@ def sandbox_command():
     return command
 
 
+def sandbox_works():
+    """False on machines where bubblewrap cannot start (no user namespaces): model-written code cannot be
+    run there, and every program would come back as failed."""
+    try:
+        return subprocess.run(["bwrap", "--unshare-all", "--ro-bind", "/", "/", "true"],
+                              capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def run_chunk(items):
     payload = "".join(json.dumps({"code": c, "tests": t}) + "\n" for c, t in items)
     finished = subprocess.run(sandbox_command(), input=payload, text=True, capture_output=True,
@@ -100,6 +110,11 @@ def run_programs(items, workers=None, chunk=50):
     """[(code, tests)] -> [{"passed", "error"}], in order, run in parallel sandboxes."""
     if not items:
         return []
+    if not sandbox_works():
+        print(f"WARNING: no working sandbox (bwrap) on this machine: {len(items)} programs are NOT run and count "
+              "as failed. Grade them again on a machine with a sandbox (stopping/regrade_rollouts.py).",
+              file=sys.stderr, flush=True)
+        return [{"passed": False, "error": "sandbox: not available on this machine"}] * len(items)
     workers = workers or max(1, (os.cpu_count() or 2) - 4)
     chunks = [items[i:i + chunk] for i in range(0, len(items), chunk)]
     out = [None] * len(chunks)

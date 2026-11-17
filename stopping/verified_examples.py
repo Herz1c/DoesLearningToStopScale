@@ -193,5 +193,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-    sys.stdout.flush()
-    os._exit(0)     # see find_stop_points.py: vLLM teardown can hang after outputs are written
+    from evaluation.chat import leave
+    leave()     # stops the vLLM engine and exits; its own teardown can hang after outputs are written

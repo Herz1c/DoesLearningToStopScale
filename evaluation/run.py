@@ -78,7 +78,8 @@ def parse_args():
     parser.add_argument("--benchmarks", default=",".join(protocol.BENCHMARKS))
     parser.add_argument("--samples", type=int, default=protocol.SAMPLES)
     parser.add_argument("--seed", type=int, default=protocol.SEED)
-    parser.add_argument("--sandbox", choices=("bwrap", "rlimit"), default="bwrap")
+    parser.add_argument("--sandbox", choices=("bwrap", "rlimit", "none"), default="bwrap",
+                        help="none: MBPP+ programs are not run here and stay ungraded until --regrade elsewhere")
     parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--regrade", action="store_true")
     parser.add_argument("--limit", type=int, help="only the first N questions of each dataset (plumbing test)")
@@ -203,7 +204,12 @@ def grade(questions, records, at, args):
             record["correct"], record["parse_error"] = verdict
         except Exception as error:      # a grader crash leaves the row ungraded, visibly
             record.update(correct=None, parse_error=None, grading_error=f"{type(error).__name__}: {error}")
-    if programs:
+    if programs and args.sandbox == "none":
+        print(f"{len(programs)} MBPP+ programs NOT run (--sandbox none): grade this run with --regrade "
+              "on a machine with a sandbox", flush=True)
+        for key, _, _ in programs:
+            records[key].update(correct=None, parse_error=None, grading_error="not run: no sandbox on this machine")
+    elif programs:
         print(f"running {len(programs)} MBPP+ programs on {args.workers} workers", flush=True)
         verdicts = run_programs(programs, at["evalplus"], at["mbpp"], args.workers, args.sandbox)
         for key, _, _ in programs:
@@ -219,8 +225,13 @@ def collect(questions, records):
     for dataset in sorted({q["dataset"] for q in questions}):
         rows = [r for r in records if r["dataset"] == dataset]
         errors = Counter(r["grading_error"] for r in rows if r.get("grading_error"))
-        results[dataset] = dict(summarize(rows), interval=interval(rows),
-                                grading_errors=dict(errors.most_common(5)))
+        if any(r["correct"] is not None for r in rows):
+            summary = summarize(rows)
+        else:       # nothing graded (MBPP+ with --sandbox none and every reply a program): tokens only
+            summary = {"n": 0, "prompts": 0, "ungraded": len(rows), "accuracy": None,
+                       "truncation_rate": sum(bool(r["truncated"]) for r in rows) / len(rows),
+                       "mean_output_tokens": sum(r["output_tokens"] for r in rows) / len(rows)}
+        results[dataset] = dict(summary, interval=interval(rows), grading_errors=dict(errors.most_common(5)))
     return results
 
 
@@ -228,7 +239,8 @@ def report(results):
     lines = [f"{'dataset':<22}{'accuracy':>10}{'95% CI':>18}{'mean tokens':>13}{'capped':>8}{'ungraded':>9}"]
     for name, r in results.items():
         lo, hi = r["interval"]["accuracy"] or (float("nan"), float("nan"))
-        lines.append(f"{name:<22}{r['accuracy']:>10.2%}{f'[{lo:.1%}, {hi:.1%}]':>18}"
+        accuracy = "not graded" if r["accuracy"] is None else f"{r['accuracy']:.2%}"
+        lines.append(f"{name:<22}{accuracy:>10}{f'[{lo:.1%}, {hi:.1%}]':>18}"
                      f"{r['mean_output_tokens']:>13.0f}{r['truncation_rate']:>8.1%}{r['ungraded']:>9}")
     return "\n".join(lines)
 

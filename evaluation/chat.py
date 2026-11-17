@@ -61,3 +61,26 @@ def engine_options(model):
     from transformers import AutoConfig
     config = AutoConfig.from_pretrained(model)
     return {"limit_mm_per_prompt": {"image": 0, "video": 0}} if hasattr(config, "vision_config") else {}
+
+
+def leave(status=0):
+    """Ends a script that ran a vLLM engine: stops the engine's processes, then exits without the
+    interpreter's teardown (which has hung after long runs). A plain os._exit left the engine process
+    alive on the 27B machine, still holding the card's memory when the next job started (out of memory
+    in the calibration of 2026-11-17)."""
+    import os
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        import psutil
+        children = psutil.Process().children(recursive=True)
+        for child in children:
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+        psutil.wait_procs(children, timeout=60)
+    except Exception as error:      # never let the clean-up turn a finished run into a failed one
+        print(f"note: engine processes not stopped ({type(error).__name__}: {error})", file=sys.stderr)
+    os._exit(status)

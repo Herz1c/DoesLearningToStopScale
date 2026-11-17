@@ -266,5 +266,5 @@ if __name__ == "__main__":
     # Everything is written and closed by now. vLLM's engine teardown occasionally hangs after a
     # long run that also forked sandbox workers (seen once, 30 min, after all outputs were saved),
     # which would stall a chain of runs: leave without it.
-    sys.stdout.flush()
-    os._exit(0)
+    from evaluation.chat import leave
+    leave()     # stops the vLLM engine and exits; its own teardown can hang after outputs are written
