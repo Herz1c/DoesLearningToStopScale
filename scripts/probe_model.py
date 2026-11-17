@@ -191,17 +191,22 @@ def train(arguments):
     if not found:
         write(arguments, report)
         return
-    try:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-        report["gradient_checkpointing"] = True
-    except Exception as error:      # noqa: BLE001
-        report["gradient_checkpointing"] = str(error)
+    report["fast_kernels"] = {name: __import__("importlib").util.find_spec(name) is not None
+                              for name in ("fla", "causal_conv1d")}     # without them transformers uses slow fallbacks
+    report["gradient_checkpointing"] = False
+    if not arguments.no_checkpointing:
+        try:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            report["gradient_checkpointing"] = True
+        except Exception as error:      # noqa: BLE001
+            report["gradient_checkpointing"] = str(error)
     model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, target_modules=found,
                                              task_type="CAUSAL_LM"))
     report["trainable_parameters"] = sum(p.numel() for p in model.parameters() if p.requires_grad)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-6)
     vocabulary = model.get_input_embeddings().weight.shape[0]
     generator = torch.Generator().manual_seed(0)
+    model.train()       # as train_lora.py; checkpointing is only active in training mode
     report["steps"] = []
     for length in arguments.lengths:
         # As stopping/train_lora.py: one sequence per backward pass (a batch is accumulated gradients), the
@@ -237,11 +242,12 @@ def train(arguments):
         print(entry, flush=True)
         if "seconds" not in entry:
             break
-    try:
-        model.save_pretrained(str(arguments.out / "adapter"))
-        report["adapter"] = sorted(p.name for p in (arguments.out / "adapter").iterdir())
-    except Exception:      # noqa: BLE001
-        report["adapter_error"] = traceback.format_exc()[-1500:]
+    if not arguments.no_save:
+        try:
+            model.save_pretrained(str(arguments.out / "adapter"))
+            report["adapter"] = sorted(p.name for p in (arguments.out / "adapter").iterdir())
+        except Exception:      # noqa: BLE001
+            report["adapter_error"] = traceback.format_exc()[-1500:]
     report["gpu_at_end_mib"] = gpu_memory()
     write(arguments, report)
 
@@ -257,8 +263,10 @@ def main():
     parser.add_argument("--memory", type=float, default=0.9, help="vLLM's share of the card")
     parser.add_argument("--text-only", action="store_true", help="Tell vLLM to load no image or video inputs")
     parser.add_argument("--adapter", type=Path)
-    parser.add_argument("--lengths", type=lambda s: [int(x) for x in s.split(",")], default=[1024, 2048, 4096, 7400],
+    parser.add_argument("--lengths", type=lambda s: [int(x) for x in s.split(",")], default=[512, 1024, 2048, 4096, 7400],
                         help="Sequence lengths of the training steps, shortest first (the recipe's longest is 7400)")
+    parser.add_argument("--no-checkpointing", action="store_true", help="Training steps without gradient checkpointing")
+    parser.add_argument("--no-save", action="store_true", help="Do not save the adapter")
     arguments = parser.parse_args()
     arguments.name = arguments.name or arguments.part
     try:
