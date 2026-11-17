@@ -1,4 +1,4 @@
-"""Scaling report: the same method at two model sizes, side by side (tables + figures).
+"""Scaling report: the same method at several model sizes, side by side (tables + figures).
 
     python analysis/scaling_report.py --out figures/scaling \
         --size "0.6B=/home/.../runs/base:/home/.../runs/grpo_submission,/home/.../runs/grpo_full" \
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analysis.difficulty_bins import REFERENCE_BINS, load, summary  # noqa: E402
 from evaluation.compare import compare  # noqa: E402
 
-SERIES = {"0.6B": "#2a78d6", "1.7B": "#eb6834"}     # validated categorical slots 1 and 2
+SERIES = {"0.6B": "#2a78d6", "1.7B": "#eb6834", "4B": "#1baf7a"}     # validated categorical slots 1-3
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e0", "#fcfcfb"
 BENCH = ("bfcl", "ifeval", "mbpp", "svamp")
 
@@ -148,7 +148,7 @@ def figures(report, out):
     import matplotlib.pyplot as plt
     sizes = [s for s, d in report["main"].items() if d]
     if sizes:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), facecolor=SURFACE)
+        fig, axes = plt.subplots(1, 2, figsize=(4 + 3 * max(2, len(sizes)), 4.2), facecolor=SURFACE)
         names = BENCH + ("average",)
         width = 0.8 / len(sizes)
         for panel, (key, title) in enumerate((("saved", "Tokens saved (%)"), ("acc", "Accuracy change (pp)"))):
@@ -165,7 +165,7 @@ def figures(report, out):
             ax.set_xticks(range(len(names)), [n.upper() if n != "average" else "Average" for n in names])
             ax.set_title(title, loc="left", fontsize=10, color=INK)
         axes[0].legend(frameon=False, fontsize=9)
-        fig.suptitle("Same recipe at two model sizes: main benchmarks", x=0.01, ha="left", fontsize=11, color=INK)
+        fig.suptitle(f"Same recipe at {len(sizes)} model sizes: main benchmarks", x=0.01, ha="left", fontsize=11, color=INK)
         fig.tight_layout()
         fig.savefig(f"{out}_benchmarks.png", dpi=160, facecolor=SURFACE)
         plt.close(fig)
@@ -179,12 +179,12 @@ def figures(report, out):
             for size, table in ladders.items():
                 levels = [k for k in range(1, 6) if k in table]
                 ys = [100 * table[k][key] for k in levels]
-                ax.plot(levels, ys, color=SERIES.get(size, MUTED), linewidth=2, marker="o", markersize=6, zorder=3)
-                ax.annotate(size, (levels[-1], ys[-1]), xytext=(6, 0), textcoords="offset points",
-                            color=INK, fontsize=9, va="center")
+                ax.plot(levels, ys, color=SERIES.get(size, MUTED), linewidth=2, marker="o", markersize=6, zorder=3,
+                        label=size)
             ax.set_xticks(range(1, 6), [f"Level {k}" for k in range(1, 6)])
-            ax.set_xlim(0.7, 5.6)
+            ax.set_xlim(0.7, 5.3)
             ax.set_title(title, loc="left", fontsize=10, color=INK)
+        axes[0].legend(frameon=False, fontsize=9)       # end-of-line labels collide once three sizes meet at level 5
         fig.suptitle("MATH-500 held-out test problems: saving and accuracy by difficulty", x=0.01, ha="left",
                      fontsize=11, color=INK)
         fig.tight_layout()
