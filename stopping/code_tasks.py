@@ -36,6 +36,7 @@ import os
 from pathlib import Path
 import random
 import re
+import shutil
 import subprocess
 import sys
 
@@ -71,19 +72,49 @@ def lenient_code(response, entry_point=None):
 # ---------- sandbox ----------
 
 def sandbox_command():
+    """The same layout as the MBPP+ sandbox (evaluation/execution.py), which worked on the 27B cluster where
+    this one did not (every program failed, 2026-11-18): the whole system read-only, the home, project and
+    temporary directories hidden, and only what the worker needs mounted back - the environment, its base
+    interpreter, every prefix its python symlink chain passes through (uv keeps interpreters in the home
+    directory, possibly under a path that is itself a link), and the worker script."""
     environment = Path(sys.prefix).resolve()
-    runtime = Path(sys.base_prefix).resolve()
-    mounts = [Path("/usr"), Path("/lib"), Path("/lib64"), environment, runtime, WORKER.parent]
+    python = Path(sys.prefix) / "bin" / "python"
+    paths = [environment, Path(sys.base_prefix).resolve(), WORKER.resolve().parent]
+    link = python
+    while link.is_symlink():
+        link = Path(os.path.normpath(link.parent / os.readlink(link)))
+        paths += [link.parent.parent, link.parent.parent.resolve()]
+    hidden = (Path("/home"), Path("/mnt"), Path("/root"), Path("/tmp"))
     command = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
+               "--ro-bind", "/", "/", "--tmpfs", "/home", "--tmpfs", "/mnt", "--tmpfs", "/root",
                "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
-    for path in dict.fromkeys(p for p in mounts if p.exists()):
-        command += ["--ro-bind", str(path), str(path)]
+    for path in dict.fromkeys(paths):
+        if path.exists() and any(h == path or h in path.parents for h in hidden):
+            command += ["--ro-bind", str(path), str(path)]
     command += ["--chdir", "/tmp", "--setenv", "HOME", "/tmp", "--setenv", "PATH", "/usr/bin:/bin",
                 "--setenv", "OPENBLAS_NUM_THREADS", "1", "--setenv", "OMP_NUM_THREADS", "1",
                 "--setenv", "PYTHONHASHSEED", "0", "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
-                "/usr/bin/prlimit", f"--as={MEMORY_BYTES}", f"--cpu={CPU_SECONDS}", "--",
+                shutil.which("prlimit") or "/usr/bin/prlimit", f"--as={MEMORY_BYTES}", f"--cpu={CPU_SECONDS}", "--",
                 str(environment / "bin/python"), str(WORKER)]
     return command
+
+
+def self_test():
+    """Runs one right and one wrong program through the sandbox. Returns None when the verdicts are right,
+    else what went wrong. bwrap starting is not enough: on the 27B cluster it started, yet every program
+    failed (the grader then reads 0% on code without an error)."""
+    good = ("def add(a, b):\n    return a + b\n", "from solution import add\n\ndef test_add():\n    assert add(2, 3) == 5\n")
+    wrong = ("def add(a, b):\n    return a - b\n", good[1])
+    try:
+        payload = "".join(json.dumps({"code": c, "tests": t}) + "\n" for c, t in (good, wrong))
+        finished = subprocess.run(sandbox_command(), input=payload, text=True, capture_output=True, timeout=120)
+        verdicts = [json.loads(line) for line in finished.stdout.splitlines() if line.strip()]
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        return f"{type(error).__name__}: {error}"
+    if [v.get("passed") for v in verdicts] != [True, False]:
+        return (f"verdicts {[v.get('passed') for v in verdicts]} instead of [True, False]; exit {finished.returncode}; "
+                f"stderr: {finished.stderr.strip()[-600:]}; command: {' '.join(sandbox_command())}")
+    return None
 
 
 def sandbox_works():

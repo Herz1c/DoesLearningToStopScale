@@ -70,6 +70,8 @@ if [ -z "$CHILD" ]; then
 fi
 if bwrap --unshare-all --ro-bind / / true 2>/dev/null; then
     SANDBOX=bwrap
+    # bwrap starting is not enough (2026-11-18: it started, yet the training-code grader failed every program)
+    [ -z "$CHILD" ] && python -c "import sys; sys.path.insert(0, '.'); from stopping.code_tasks import self_test; e = self_test(); print('code sandbox self-test: ' + (e or 'OK'))"
 else
     SANDBOX=none
     [ -z "$CHILD" ] && echo "NOTE: bubblewrap (bwrap) cannot start a sandbox here, so model-written code is not run on this machine." \
