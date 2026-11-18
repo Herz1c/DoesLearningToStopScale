@@ -24,7 +24,10 @@ gradient, averaged over generated tokens. No KL term: the update is a LoRA at a 
 rate for a few dozen steps, and every 10th step is saved to choose from.
 
 vLLM (generation) and the trained model share the GPU: vLLM takes --vllm-memory of it and loads
-the newest adapter from disk each step.
+the newest adapter from disk each step. A model too large to share one card (Qwen3.8-27B) uses two:
+with CUDA_VISIBLE_DEVICES=0,1 vLLM takes the first visible card and --train-device cuda:1 puts the trained
+model on the second; --max-seqs then caps vLLM's concurrent sequences (models with linear-attention layers
+need a state block per sequence, and vLLM's default of 1 024 can exceed what the card holds).
 """
 
 import argparse
@@ -94,6 +97,8 @@ def main():
     parser.add_argument("--weights", default="math=0.5,code=0.2,tool=0.15,instruction=0.15")
     parser.add_argument("--vllm-memory", type=float, default=0.35)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--train-device", default="cuda", help="Device of the trained model, e.g. cuda:1")
+    parser.add_argument("--max-seqs", type=int, help="vLLM's max_num_seqs (default: vLLM's own)")
     parser.add_argument("--resume", action="store_true",
                         help="Continue a stopped run: adapter from <out>/latest, steps and domain means from its "
                              "log, optimizer state from <out>/optimizer.pt if present, prompt order replayed")
@@ -113,15 +118,22 @@ def main():
     from vllm.lora.request import LoRARequest
     rank = json.loads((arguments.init / "adapter_config.json").read_text())["r"]
     from evaluation.chat import engine_options
+    if arguments.max_seqs is None and not MODEL.startswith("Qwen/Qwen3-"):
+        # Linear-attention models need one state block per running sequence and vLLM's default (256) can be
+        # more than the card holds; a step never runs more than prompts x group at once. Qwen3 keeps vLLM's default.
+        arguments.max_seqs = arguments.prompts * arguments.group
     llm = LLM(model=MODEL, gpu_memory_utilization=arguments.vllm_memory, max_model_len=6144 + 1024,
               enable_lora=True, max_lora_rank=rank, max_loras=1, max_cpu_loras=2, seed=arguments.seed,
-              **engine_options(MODEL))
+              **({"max_num_seqs": arguments.max_seqs} if arguments.max_seqs else {}), **engine_options(MODEL))
 
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     end = tokenizer.convert_tokens_to_ids("<|im_end|>")
-    model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch.bfloat16).to("cuda")
+    device = torch.device(arguments.train_device)
+    if device.type == "cuda" and device.index is not None:
+        torch.cuda.set_device(device)
+    model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=torch.bfloat16).to(device)
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     # Resuming: the prompt draws of the finished steps are replayed so the run continues with the prompts an
@@ -143,7 +155,7 @@ def main():
     parameters = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(parameters, lr=arguments.lr, weight_decay=0.0)
     if arguments.resume and (arguments.out / "optimizer.pt").exists():
-        optimizer.load_state_dict(torch.load(arguments.out / "optimizer.pt"))
+        optimizer.load_state_dict(torch.load(arguments.out / "optimizer.pt", map_location=device))
 
     current = start_adapter
     started = time.monotonic()
@@ -196,7 +208,7 @@ def main():
             completion = list(outputs[k][3].token_ids)
             if outputs[k][3].finish_reason == "stop" and (not completion or completion[-1] != end):
                 completion.append(end)
-            ids = torch.tensor([prompt_ids[k] + completion], device="cuda")
+            ids = torch.tensor([prompt_ids[k] + completion], device=device)
             loss = -advantage[k] * token_logprob_sum(model, ids, len(prompt_ids[k])) / tokens
             loss.backward()
         torch.nn.utils.clip_grad_norm_(parameters, 1.0)
