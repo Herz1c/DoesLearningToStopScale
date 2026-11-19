@@ -71,7 +71,7 @@ def lenient_code(response, entry_point=None):
 
 # ---------- sandbox ----------
 
-def sandbox_command():
+def sandbox_command(worker=None):
     """The same layout as the MBPP+ sandbox (evaluation/execution.py), which worked on the 27B cluster where
     this one did not (every program failed, 2026-11-18): the whole system read-only, the home, project and
     temporary directories hidden, and only what the worker needs mounted back - the environment, its base
@@ -79,7 +79,8 @@ def sandbox_command():
     directory, possibly under a path that is itself a link), and the worker script."""
     environment = Path(sys.prefix).resolve()
     python = Path(sys.prefix) / "bin" / "python"
-    paths = [environment, Path(sys.base_prefix).resolve(), WORKER.resolve().parent]
+    worker = Path(worker or WORKER).resolve()        # another worker script may use the same sandbox
+    paths = [environment, Path(sys.base_prefix).resolve(), worker.parent]
     link = python
     while link.is_symlink():
         link = Path(os.path.normpath(link.parent / os.readlink(link)))
@@ -95,7 +96,7 @@ def sandbox_command():
                 "--setenv", "OPENBLAS_NUM_THREADS", "1", "--setenv", "OMP_NUM_THREADS", "1",
                 "--setenv", "PYTHONHASHSEED", "0", "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
                 shutil.which("prlimit") or "/usr/bin/prlimit", f"--as={MEMORY_BYTES}", f"--cpu={CPU_SECONDS}", "--",
-                str(environment / "bin/python"), str(WORKER)]
+                str(environment / "bin/python"), str(worker)]
     return command
 
 
