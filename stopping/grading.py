@@ -35,9 +35,17 @@ def grade(pairs):
             results[k] = grade_constraint(row, text)
         elif row["task"] == "math" and not LEGACY_MATH:
             results[k] = (is_plain_correct(text, row["answer"]), knows(text, row["answer"], "math"))
-        elif row["task"] != "code":
+        elif row["task"] == "math_boxed":       # long-reasoning track (stopping/long_tasks.py)
+            from stopping.long_tasks import grade_boxed
+            results[k] = grade_boxed(row, text)
+        elif row["task"] not in ("code", "code_io"):
             results[k] = (is_task_correct(text, row["answer"], row["task"]),
                           knows(text, row["answer"], row["task"]))
+    programs = [(k, row, text) for k, (row, text) in enumerate(pairs) if row["task"] == "code_io"]
+    if programs:
+        from stopping.long_tasks import grade_io
+        for (k, _, _), verdict in zip(programs, grade_io([(row, text) for _, row, text in programs])):
+            results[k] = verdict
     if code:
         from stopping.code_tasks import grade_code
         for (k, _, _), verdict in zip(code, grade_code([(row, text) for _, row, text in code])):
