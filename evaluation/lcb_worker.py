@@ -19,7 +19,7 @@ import tempfile
 TIME_LIMIT = 6          # seconds per test, the benchmark's default
 PRELUDE = ("import sys, os, re, math, heapq, bisect, itertools, functools, collections, string, random, operator\n"
            "from typing import *\nfrom collections import *\nfrom itertools import *\nfrom functools import *\n"
-           "from heapq import *\nfrom bisect import *\nfrom math import *\nsys.setrecursionlimit(1000000)\n")
+           "from heapq import *\nfrom bisect import *\nfrom math import *\nfrom builtins import *\nsys.setrecursionlimit(1000000)\n")
 CALLER = """
 import json as _json, sys as _sys
 _args = [_json.loads(line) for line in _sys.stdin.read().split("\\n") if line.strip()]
