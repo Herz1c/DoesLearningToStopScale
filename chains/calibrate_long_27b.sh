@@ -6,8 +6,9 @@
 #     tail -f calibrate_long_27b.log
 #
 # Needs: the environment .venv27, the file data/long_cal_all.jsonl (unpack long_cal_pools.tar.gz in the repo
-# folder), internet. Two cards (GPUS="0 1", the default): each takes half of the questions, with its own log
-# (calibrate_long_27b.gpu<N>.log). With one card (GPUS="0") the halves run one after the other.
+# folder), internet. Every card named in GPUS (default "0 1"; any number, e.g. GPUS="0 1 2 3") takes an equal share
+# of the questions, with its own log (calibrate_long_27b.gpu<N>.log). Keep the same GPUS when starting again
+# after a stop: the shares are named after their number.
 # Steps: 1. rollouts (2 per question, temperature 1.0, up to 65 536 tokens)   2. forced answers at up to 12
 # points of every rollout   3. first card: GPQA-Diamond for the base model, if the login allows it (accept the
 # terms at https://huggingface.co/datasets/Idavidrein/gpqa, then `hf auth login`); second card: how long a
@@ -20,8 +21,8 @@ cd "$(dirname "$0")/.." || exit 1
 source "${VENV:-.venv27}/bin/activate" || { echo "no environment: run chains/probe_27b.sh first"; exit 1; }
 export BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3.8-27B} PYTHONUNBUFFERED=1 VLLM_USE_FLASHINFER_SAMPLER=0
 STAGES=${STAGES:-rollouts readouts extras}
-set -- ${GPUS:-0 1}
-GA=$1 GB=${2:-$1}
+CARDS=(${GPUS:-0 1})
+N=${#CARDS[@]}
 R=runs/27b_long_cal
 REF=runs/27b_reference
 mkdir -p $R
@@ -30,7 +31,7 @@ has() { case " $STAGES " in *" $1 "*) return 0;; esac; return 1; }
 source chains/gpu_wait.sh
 one_chain $R/.calibrate.lock
 
-stamp "long-reasoning calibration start: model $BASE_MODEL, stages: $STAGES, cards: $GA $GB"
+stamp "long-reasoning calibration start: model $BASE_MODEL, stages: $STAGES, cards: ${CARDS[*]}"
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv,noheader
 echo "code at commit $(git rev-parse --short HEAD 2>/dev/null)"
 [ -s data/long_cal_all.jsonl ] || { stamp "data/long_cal_all.jsonl is missing: unpack long_cal_pools.tar.gz in $(pwd)"; exit 1; }
@@ -57,9 +58,9 @@ job() {
     done
     stamp "$name FAILED - last lines of $R/$name.log:"; tail -8 $R/$name.log; return 1
 }
-half() {     # half <index>: this card's half of the questions, then of the forced answers
-    if has rollouts; then job rollouts$1 python stopping/long_rollouts.py --data data/long_cal_all.jsonl --out $R --shard $1/2 $CAL_ARGS; fi
-    if has readouts; then job readouts$1 python stopping/readouts.py $R --shard $1/2; fi
+part() {     # part <index>: this card's share of the questions, then of the forced answers
+    if has rollouts; then job rollouts$1 python stopping/long_rollouts.py --data data/long_cal_all.jsonl --out $R --shard $1/$N --wave 2000 $CAL_ARGS; fi
+    if has readouts; then job readouts$1 python stopping/readouts.py $R --shard $1/$N; fi
 }
 gpqa() {
     python -m evaluation.reference --prepare 2>&1 | grep -a -v -i "warn" > $R/prepare.log
@@ -73,14 +74,14 @@ gpqa() {
 }
 probe() { job memory_probe python stopping/memory_probe.py ${PROBE_LENGTHS:+--lengths $PROBE_LENGTHS}; }
 
-if [ "$GA" != "$GB" ]; then
-    ( export CUDA_VISIBLE_DEVICES=$GA; half 0; if has extras; then gpqa; fi ) > calibrate_long_27b.gpu$GA.log 2>&1 &
-    ( export CUDA_VISIBLE_DEVICES=$GB; half 1; if has extras; then probe; fi ) > calibrate_long_27b.gpu$GB.log 2>&1 &
-    wait
-    cat calibrate_long_27b.gpu$GA.log calibrate_long_27b.gpu$GB.log
-else
-    ( export CUDA_VISIBLE_DEVICES=$GA; half 0; half 1; if has extras; then gpqa; probe; fi )
-fi
+# every card takes one share; afterwards the first card adds GPQA-Diamond and the second (or the first, alone) the memory probe
+for k in "${!CARDS[@]}"; do
+    ( export CUDA_VISIBLE_DEVICES=${CARDS[$k]}; part $k
+      if has extras && [ $k -eq 0 ]; then gpqa; fi
+      if has extras && [ $k -eq $(( N > 1 ? 1 : 0 )) ]; then probe; fi ) > calibrate_long_27b.gpu${CARDS[$k]}.log 2>&1 &
+done
+wait
+for k in "${!CARDS[@]}"; do cat calibrate_long_27b.gpu${CARDS[$k]}.log; done
 
 echo; echo "== rollouts by part (knows = right answer however formatted; capped = ran into the token limit)"
 python - <<'PY' 2>/dev/null | tee runs/27b_long_cal/rollouts_summary.txt
