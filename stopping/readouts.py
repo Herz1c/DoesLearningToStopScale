@@ -14,6 +14,13 @@ The report gives, per part of the pool and per length of the thinking, how much 
 settled point - an estimate of what stopping can save at all - next to the share lying after the *first* right
 boundary. With 12 boundaries the settled point is found late rather than early, so the estimate is a lower one.
 Rollouts are read from <dir>/rollouts*.jsonl; results go to <dir>/readouts*.jsonl. Resumable by rollout.
+
+    python stopping/readouts.py runs/27b_long_cal --tasks code_io       # only the rollouts of these tasks
+    python stopping/readouts.py runs/27b_long_cal --regrade             # programs graded again, engine not loaded
+
+The forced answers of program tasks are kept in the file ("answers"), because a judge on a busy machine cannot be
+trusted (2026-11-21: time limits on right programs while the engine was loaded): --regrade runs the kept programs
+and the programs of the rollouts themselves again and rewrites the verdicts; the earlier files stay as *.before.
 """
 
 import argparse
@@ -62,6 +69,53 @@ def settled(cuts):
     return point, first
 
 
+def regrade(directory):
+    """Program tasks only: the rollouts' own answers and the kept forced answers through the judge once more."""
+    changed = collections.Counter()
+    tests = {}
+    for path in sorted(Path(directory).glob("rollouts*.jsonl")):
+        rows = read(directory, path.name)
+        mine = [r for r in rows if r["task"] == "code_io"]
+        tests.update({(r["question_id"], r["sample"]): r for r in mine})
+        for r, (strict, known) in zip(mine, grade([(r, r["text"]) for r in mine])):
+            changed[("rollouts", bool(r["knows"]), bool(known))] += 1
+            r["correct"], r["knows"] = strict, known
+        rewrite(path, rows)
+    for path in sorted(Path(directory).glob("readouts*.jsonl")):
+        rows = read(directory, path.name)
+        cells = [(r, c, text) for r in rows if r["task"] == "code_io" for c in r["cuts"] for text in c.get("answers", [])]
+        grades = grade([(tests[(r["question_id"], r["sample"])], "</think>" + text) for r, c, text in cells])
+        fresh = collections.defaultdict(list)
+        for (r, c, _), (_, known) in zip(cells, grades):
+            fresh[(r["question_id"], r["sample"], c["cut"])].append(bool(known))
+        for r in rows:
+            if r["task"] != "code_io":
+                continue
+            source = tests[(r["question_id"], r["sample"])]
+            r["correct"], r["knows"] = source["correct"], source["knows"]
+            for c in r["cuts"]:
+                new = fresh.get((r["question_id"], r["sample"], c["cut"]))
+                if new is None:
+                    changed[("readouts without kept answers", "-", "-")] += len(c["right"])
+                    continue
+                for before, after in zip(c["right"], new):
+                    changed[("readouts", before, after)] += 1
+                c["right"] = new
+        rewrite(path, rows)
+    print("regrade (file, right before, right now): count")
+    for key, count in sorted(changed.items(), key=str):
+        print(f"  {key}: {count}")
+
+
+def rewrite(path, rows):
+    before = path.with_name(path.name + ".before")
+    if not before.exists():
+        os.replace(path, before)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    os.replace(temporary, path)
+
+
 def report(directory):
     rows = read(directory, "readouts*.jsonl")
     if not rows:
@@ -93,6 +147,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--report", action="store_true")
+    parser.add_argument("--regrade", action="store_true", help="Program tasks: judge the kept answers again")
+    parser.add_argument("--tasks", help="Comma-separated tasks; only their rollouts get readouts")
+    parser.add_argument("--judge-later", action="store_true",
+                        help="Program tasks: keep the answers, mark them wrong for now, run --regrade afterwards")
     parser.add_argument("--shard", default="0/1", help="i/n: the questions whose id is i modulo n")
     parser.add_argument("--wave", type=int, default=150, help="Rollouts per engine call")
     parser.add_argument("--max-seqs", type=int, default=128)
@@ -100,9 +158,12 @@ def main():
     arguments = parser.parse_args()
     if arguments.report:
         return report(arguments.directory)
+    if arguments.regrade:
+        return regrade(arguments.directory)
 
     index, count = (int(x) for x in arguments.shard.split("/"))
-    rollouts = [r for r in read(arguments.directory, "rollouts*.jsonl") if r["question_id"] % count == index]
+    rollouts = [r for r in read(arguments.directory, "rollouts*.jsonl") if r["question_id"] % count == index
+                and (not arguments.tasks or r["task"] in arguments.tasks.split(","))]
     path = arguments.directory / (f"readouts.{index}of{count}.jsonl" if count > 1 else "readouts.jsonl")
     done = {(r["question_id"], r["sample"]) for r in read(arguments.directory, path.name)}
     todo = [r for r in rollouts if (r["question_id"], r["sample"]) not in done]
@@ -120,6 +181,10 @@ def main():
               max_model_len=longest + max(ANSWER_TOKENS.values()) + 64, max_num_seqs=arguments.max_seqs,
               **chat.engine_options(MODEL))
 
+    if any(r["task"] == "code_io" for r in todo):
+        from stopping.long_tasks import judge_timing
+        print("with the engine loaded -", end=" ", flush=True)
+        judge_timing()
     started = time.monotonic()
     with path.open("a", encoding="utf-8") as stream:
         for start in range(0, len(todo), arguments.wave):
@@ -133,12 +198,16 @@ def main():
                                      seed=arguments.seed + 7 * r["question_id"] + cut) for r, cut, _ in jobs]
             results = llm.generate([{"prompt_token_ids": ids} for _, _, ids in jobs], params, use_tqdm=False) if jobs else []
             answers = [(r, cut, o) for (r, cut, _), result in zip(jobs, results) for o in result.outputs]
-            grades = grade([(r, "</think>" + o.text) for r, cut, o in answers])
+            later = {k for k, (r, _, _) in enumerate(answers) if arguments.judge_later and r["task"] == "code_io"}
+            now = iter(grade([(r, "</think>" + o.text) for k, (r, cut, o) in enumerate(answers) if k not in later]))
+            grades = [(False, False) if k in later else next(now) for k in range(len(answers))]
             cuts = collections.defaultdict(lambda: collections.defaultdict(lambda: {"right": [], "answer_tokens": []}))
             for (r, cut, o), (_, known) in zip(answers, grades):
                 cell = cuts[(r["question_id"], r["sample"])][cut]
                 cell["right"].append(bool(known))
                 cell["answer_tokens"].append(len(o.token_ids))
+                if r["task"] == "code_io":
+                    cell.setdefault("answers", []).append(o.text)
             for r in wave:
                 mine = cuts.get((r["question_id"], r["sample"]), {})
                 stream.write(json.dumps({

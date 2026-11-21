@@ -53,11 +53,22 @@ BLOCK = re.compile(r"```(?:python|py|Python|python3)?[ \t]*\n(.*?)```", re.S)
 
 # ---- grading ---------------------------------------------------------------------------------------------------
 
-def run_io(items, workers=None):
-    """[(key, program, tests)] -> {key: (passed, error)}; tests are [{"input", "output"}], run as stdin tests."""
+def judge_workers():
+    """Parallel judge processes: JUDGE_WORKERS, or the cores this job may really use (on a cluster os.cpu_count()
+    is the whole node), at most 12."""
+    if os.environ.get("JUDGE_WORKERS"):
+        return max(1, int(os.environ["JUDGE_WORKERS"]))
+    cores = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    return max(1, min(12, cores))
+
+
+def run_io(items, workers=None, retry=True):
+    """[(key, program, tests)] -> {key: (passed, error)}; tests are [{"input", "output"}], run as stdin tests.
+    A "time limit" or a missing verdict is not believed from a busy machine: those programs run once more, one
+    at a time. (2026-11-21: with the engine still loaded the cluster failed 304 of 359 right programs.)"""
     from concurrent.futures import ThreadPoolExecutor
     from stopping.code_tasks import sandbox_command
-    workers = workers or min(12, os.cpu_count() or 1)
+    workers = workers or judge_workers()
     shares = [items[i::workers] for i in range(workers)]
 
     def run(share):
@@ -77,6 +88,14 @@ def run_io(items, workers=None):
     with ThreadPoolExecutor(workers) as pool:
         for part in pool.map(run, [s for s in shares if s]):
             merged.update(part)
+    doubtful = [item for item in items if not merged[item[0]][0]
+                and ("time limit" in str(merged[item[0]][1]) or "no verdict" in str(merged[item[0]][1]))]
+    if retry and workers > 1 and doubtful:
+        again = run_io(doubtful, workers=1, retry=False)
+        changed = sum(bool(again[key][0]) for key, _, _ in doubtful)
+        print(f"judge: {len(doubtful)} of {len(items)} programs timed out or gave no verdict with {workers} workers; "
+              f"alone {changed} of them pass", flush=True)
+        merged.update(again)
     return merged
 
 
@@ -104,9 +123,9 @@ def judge_timing(count=24):
     """Seconds per trivial program through the judge, alone and with every worker busy. A program is one Python
     start plus one test; anything near the judge's 6 s limit explains "time limit" verdicts on right programs."""
     program, tests = "print(sum(map(int, input().split())))\n", [{"input": "2 3\n", "output": "5\n"}]
-    for workers in (1, min(12, os.cpu_count() or 1)):
+    for workers in (1, judge_workers()):
         started = time.monotonic()
-        verdicts = run_io([(k, program, tests * 3) for k in range(count)], workers=workers)
+        verdicts = run_io([(k, program, tests * 3) for k in range(count)], workers=workers, retry=False)
         seconds = time.monotonic() - started
         passed = sum(bool(v[0]) for v in verdicts.values())
         errors = collections.Counter(str(v[1]) for v in verdicts.values() if not v[0]).most_common(2)
