@@ -88,7 +88,9 @@ def buckets(base, run, ids):
         kept[1] = (kept[0][0] + " + " + kept[1][0], kept[0][1] + kept[1][1])
         kept = kept[1:]
     return [{"bucket": n, "questions": len(g),
-             "change": 100 * mean(mean(run[q]["right"]) - mean(base[q]["right"]) for q in g)} for n, g in kept]
+             "change": 100 * mean(mean(run[q]["right"]) - mean(base[q]["right"]) for q in g),
+             "thinking_base": mean(t for q in g for t in base[q]["thinking"]),
+             "thinking": mean(t for q in g for t in run[q]["thinking"])} for n, g in kept]
 
 
 def main():
@@ -137,7 +139,8 @@ def main():
               f"saving {saving:.1f}% [{saving_ci[0]:.1f}, {saving_ci[1]:.1f}]   (rule: change >= {OVERALL})")
         for b in parts:
             mark = "" if b["change"] >= BUCKET else "   <-- below the rule"
-            print(f"  bucket {b['bucket']:22} {b['questions']:4} questions  change {b['change']:+6.2f} pp{mark}")
+            print(f"  bucket {b['bucket']:22} {b['questions']:4} questions  change {b['change']:+6.2f} pp   thinking "
+                  f"{b['thinking_base']:7.0f} -> {b['thinking']:7.0f} ({100 * (1 - b['thinking'] / max(1.0, b['thinking_base'])):5.1f}% saved){mark}")
         print(f"  replies with under 20 thinking tokens: base {100 * short_base:.1f}%, {name} {100 * short:.1f}%")
         print(f"  {name}: {'PASSES' if passed else 'DOES NOT PASS'} the rule")
     winner = max(passing)[1] if passing else "none"
