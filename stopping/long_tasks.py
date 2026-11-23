@@ -274,25 +274,53 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--domains", default="math,code,choice,constraint,tool")
     parser.add_argument("--judge-timing", action="store_true")
+    parser.add_argument("--counts", help="Per-domain counts, e.g. math=550,code=370,tool=100 (default: --count, tool 100)")
+    parser.add_argument("--exclude", nargs="*", default=[], type=Path,
+                        help="Pool files whose questions are not drawn again (validation and later pools)")
+    parser.add_argument("--all", action="store_true", help="Also write <name>_all.jsonl: every domain, shuffled")
+    parser.add_argument("--constraint-file", default="pool27b_constraint.jsonl",
+                        help="Constrained prompts in --out to draw the constraint domain from")
     arguments = parser.parse_args()
     if arguments.judge_timing:
         return judge_timing()
     drop = overlap_filter(arguments.questions)
     data = arguments.out
+    used = {json.dumps(json.loads(line)["prompt"]) for path in arguments.exclude
+            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    counts = {d: (100 if d == "tool" else arguments.count) for d in ("math", "code", "choice", "constraint", "tool")}
+    counts.update({k: int(v) for k, v in (item.split("=") for item in (arguments.counts or "").split(",") if item)})
+    extra = len(used)        # drawn on top, so that enough is left once the used questions are taken out
     builders = {
-        "math": lambda rng: math_rows(arguments.sources, arguments.count, rng, drop),
-        "code": lambda rng: code_rows(arguments.sources, arguments.count, rng, drop),
-        "choice": lambda rng: choice_rows(arguments.sources, arguments.count, rng, drop, data / "train.jsonl"),
-        "constraint": lambda rng: old_rows(data / "pool27b_constraint.jsonl", arguments.count, rng, drop,
-                                           lambda r: all(c["kind"] != "emojis" for c in r["answer"])),
-        "tool": lambda rng: old_rows(data / "pool27b_tool.jsonl", 100, rng, drop),
+        "math": lambda rng, n: math_rows(arguments.sources, n, rng, drop),
+        "code": lambda rng, n: code_rows(arguments.sources, n, rng, drop),
+        "choice": lambda rng, n: choice_rows(arguments.sources, n, rng, drop, data / "train.jsonl"),
+        "constraint": lambda rng, n: old_rows(data / arguments.constraint_file, n, rng, drop,
+                                              lambda r: all(c["kind"] != "emojis" for c in r["answer"])),
+        "tool": lambda rng, n: old_rows(data / "pool27b_tool.jsonl", n, rng, drop),
     }
+    everything = []
     for k, domain in enumerate(arguments.domains.split(",")):
-        rows = builders[domain](random.Random(arguments.seed * 100 + k))
+        rows = builders[domain](random.Random(arguments.seed * 100 + k), counts[domain] + (extra if used else 0))
+        rows = [r for r in rows if json.dumps(r["prompt"]) not in used]
+        parts = collections.defaultdict(list)       # trimmed back to the wanted count, the parts kept in balance
+        for r in rows:
+            parts[r.get("part", "-")].append(r)
+        kept = []
+        while len(kept) < counts[domain] and any(parts.values()):
+            for name in sorted(parts):
+                if parts[name] and len(kept) < counts[domain]:
+                    kept.append(parts[name].pop(0))
+        rows = [dict(r, domain=domain) for r in kept]
         assert len({json.dumps(r["prompt"]) for r in rows}) == len(rows), f"{domain}: repeated prompts"
         path = data / f"{arguments.name}_{domain}.jsonl"
         path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-        print(f"{path}: {len(rows)} rows {dict(collections.Counter(r.get('part', '-') for r in rows))}", flush=True)
+        print(f"{path}: {len(rows)} rows (wanted {counts[domain]}) {dict(collections.Counter(r.get('part', '-') for r in rows))}", flush=True)
+        everything += rows
+    if arguments.all:
+        random.Random(arguments.seed + 20261123).shuffle(everything)      # shares and waves then mix the domains
+        path = data / f"{arguments.name}_all.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in everything), encoding="utf-8")
+        print(f"{path}: {len(everything)} rows", flush=True)
 
 
 if __name__ == "__main__":

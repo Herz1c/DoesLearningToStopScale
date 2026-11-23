@@ -26,7 +26,7 @@ from stopping.grading import grade  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3.8-27B")
 SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0}
-CARRY = ("tests", "entry_point", "functions", "variant", "part", "name", "rating", "contest")
+CARRY = ("tests", "entry_point", "functions", "variant", "part", "name", "rating", "contest", "domain")
 
 
 def shard_of(text):
@@ -46,6 +46,9 @@ def main():
     parser.add_argument("--max-seqs", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20261120)
     parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--judge-later", action="store_true",
+                        help="Programs are not run here (marked wrong); stopping/readouts.py --regrade judges them "
+                             "once the engine is gone")
     arguments = parser.parse_args()
 
     index, count = shard_of(arguments.shard)
@@ -97,8 +100,10 @@ def main():
                         "thinking_tokens": ids.index(close_id) + 1 if closed else len(ids),
                         "finished": output.finish_reason == "stop",
                         "text": tokenizer.decode(ids, skip_special_tokens=True), "token_ids": ids})
-            for record, (strict, known) in zip(records, grade([(r, r["text"]) for r in records])):
-                record["correct"], record["knows"] = strict, known
+            later = {k for k, r in enumerate(records) if arguments.judge_later and r["task"] == "code_io"}
+            now = iter(grade([(r, r["text"]) for k, r in enumerate(records) if k not in later]))
+            for k, record in enumerate(records):
+                record["correct"], record["knows"] = (False, False) if k in later else next(now)
                 stream.write(json.dumps(record) + "\n")
             stream.flush()
             tokens += sum(r["tokens"] for r in records)
