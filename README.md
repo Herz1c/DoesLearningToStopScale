@@ -31,7 +31,7 @@ Student project, October–November 2026. 1.7B: one RTX 5060 Ti (16 GB), about 7
 
 ## Result: Qwen3-1.7B
 
-| Benchmark | What it tests | Tokens saved, 1.7B | Accuracy change, 1.7B | 0.6B, for comparison |
+| Benchmark | What it tests | Tokens saved, 1.7B | Accuracy change, 1.7B | 0.6B (two-run mean) |
 | --- | --- | ---: | ---: | ---: |
 | MBPP+ | writing a Python function | **55.7%** | **+4.12 pp** | 64.9% / −0.98 pp |
 | IFEval | following format instructions | **50.3%** | −0.23 pp | 38.9% / −0.61 pp |
@@ -44,7 +44,9 @@ Mean of two full evaluations of the same adapter, 8 samples per question, 22,072
 (95% paired bootstrap intervals over questions). Tokens saved per benchmark is one minus the ratio of
 summed tokens, thinking included, a response cut off at the cap counted in full and as wrong; the
 average is the geometric mean over benchmarks, accuracy change the arithmetic mean. vLLM is not
-bit-reproducible: only 34% of responses are identical between the two runs.
+bit-reproducible: only 34% of responses are identical between the two runs. The 0.6B column is the mean of
+its two full runs as well; the per-benchmark table in the 0.6B repository shows one of the two, so those
+numbers differ slightly from these.
 
 **Held-out sets** (never looked at during development):
 
@@ -54,8 +56,10 @@ bit-reproducible: only 34% of responses are identical between the two runs.
 | GSM8K test (500 × 2) | 35.9% [32.5, 39.1] | +34.1 pp (mostly the requested answer format, learned) |
 | MATH-500, all levels (313 × 4) | 11.4% [9.6, 13.5] | +4.8 pp [+2.7, +7.0] (graded format-independently) |
 
-**Pre-registered criterion** for "the method transfers": at least 30% saved and at least −1.5 pp average
-accuracy on the two-run mean, and a HumanEval interval that covers zero. All three are met.
+**Criterion fixed in advance** for "the method transfers": at least 30% saved and at least −1.5 pp average
+accuracy on the two-run mean, and a HumanEval interval that covers zero. All three are met. (Written in my
+research log before the 1.7B runs. The log is private, so this is self-reported; see
+[PREREGISTRATION.md](PREREGISTRATION.md), where later criteria are committed before their results.)
 
 ### What did not go well
 
@@ -87,7 +91,8 @@ The model still reasons on every question: no response in any run has fewer than
 | GSM8K test (500 × 2) | 32.4% [30.0, 34.9] | +6.6 pp [+4.7, +8.7] (graded format-independently) |
 | MATH-500, all levels (313 × 4) | 11.5% [10.0, 13.2] | +10.4 pp [+8.0, +12.9] (graded format-independently) |
 
-The **pre-registered criterion** (the same as for 1.7B, written down before any 4B training result) is met:
+The **criterion fixed in advance** (the same as for 1.7B, written down in the research log before any 4B
+training result; self-reported, as above) is met:
 43.7% ≥ 30%, −1.05 pp ≥ −1.5 pp, and the HumanEval interval covers zero. HumanEval is a weak test at this
 size, though: the 4B base already solves 89.5% of it. GSM8K and MATH share their source with the training pools.
 
@@ -157,12 +162,12 @@ Both stages train a LoRA (r = 16) on the model's own outputs, never on evaluatio
 2. **GRPO** from that adapter, reward `1[correct] · (1 − α · length / domain mean length)`; a wrong or capped
    answer earns nothing whatever its length.
 
-The 0.6B repository explains the method, its prior art and its failures in detail; nothing about it was
-re-tuned here.
+The 0.6B repository explains the method and its failures in detail; nothing about it was re-tuned here.
 
 ## What changed from the 0.6B setup, and why
 
-All written into the research log before the results they could affect:
+All written into the research log before the results they could affect (the log is private; see
+[PREREGISTRATION.md](PREREGISTRATION.md) for what that does and does not prove):
 
 - **Own evaluation module** (`evaluation/`) instead of the reference harness. Same protocol; the benchmark
   authors' graders (EvalPlus, BFCL's AST checker, Google's IFEval verifiers) are downloaded at pinned
@@ -180,7 +185,7 @@ All written into the research log before the results they could affect:
 Deviations that happened rather than were planned: the run was interrupted twice by Windows Update and once
 by a pause; every step resumed from its saved state, except that GRPO continued from step 30 with a fresh
 optimizer state. The hard coding pool came out easier than its calibration sample (56.8% correct attempts
-against a 51.9% target). Details, timings and every number are kept in a research log (not public yet).
+against a 51.9% target). Details, timings and every number are kept in a private research log.
 
 ## Reproduce
 
@@ -221,6 +226,11 @@ The evaluation protocol (prompts, sampling, token caps, metric) follows the
 
 ## Next
 
-A much larger model. Before that: remove the doubled `</think>`, build a function-calling pool that is
-actually hard for the base model, add held-out sets for function calling and instruction following and a
-harder held-out coding set, and repeat the training with more than one seed.
+A much larger model, Qwen3.8-27B, and reasoning that is tens of thousands of tokens long rather than hundreds.
+That work is in progress and not reported here yet. Its success criteria, method and selection rules are
+committed in [PREREGISTRATION.md](PREREGISTRATION.md) before the results they judge; the results will be added
+here when the runs are complete, the negative ones included.
+
+Still open from the three sizes above: the doubled `</think>`, a function-calling pool that is actually hard
+for the base model, held-out sets for function calling and instruction following, a harder held-out coding
+set, and more than one training seed.
