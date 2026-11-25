@@ -240,3 +240,52 @@ hyper-parameters, the same validation measure and rule. Differences, all forced 
 A new method goes to the 27B model only after, on the 4B test bed, it passes the same rule in every length
 bucket and passes a test on reasoning lengths it was not trained on. That test and the method are registered
 here before they are run.
+
+---
+
+## Replication of the pilot on Qwen3-0.6B
+
+Registered 2026-11-25, before the run. The commit that adds this section is its timestamp; the run is started
+only after that commit is public. It runs at the same time as the 4B replication, and neither result had been
+seen when this was written.
+
+### Purpose
+
+The same question as for 4B, asked of the smallest model: **does the unchanged pilot fail the same way on
+Qwen3-0.6B?** A 0.6B run is cheap enough to be repeated many times, so if it reproduces the failure it is the
+fastest place to try a new method. It is not a substitute for 4B (see the last part of this section).
+
+### What had been seen
+
+Everything listed for the 4B replication above. Qwen3-0.6B on the short benchmarks and with the short-task
+recipe (the first study). Not seen: Qwen3-0.6B on any of the long-reasoning pools, with or without an adapter.
+
+### Protocol
+
+Identical to the 4B replication (`chains/long_4b.sh` with `BASE_MODEL=Qwen/Qwen3-0.6B`, `TAG=06b`; the same
+questions, cap of 32,768 tokens, objectives, hyper-parameters, measure and rule), run from
+`notebooks/long_06b_colab.ipynb` on one GPU with bf16. Two differences, neither meant to change any number:
+
+- program judging may use the fallback sandbox (`SANDBOX=user` in `stopping/code_tasks.py`) if bubblewrap cannot
+  run on that machine; it must pass the same self-test and the chain's 24/24 judge check first;
+- library versions are those of the 27B environment (vLLM 0.34, Transformers 5.22, PEFT 0.21).
+
+### Reading of the result (fixed now)
+
+- **Enough long reasoning to judge:** at least 20 of the 300 validation questions with a base mean thinking of
+  8,000 tokens or more, **and at least 10 of those answered right in at least one of the 4 base rollouts**.
+  The second condition is new for 0.6B: a small model may think long on questions it never gets right, and a
+  bucket with nothing right cannot lose accuracy. If either fails, these pools do not test long reasoning on
+  this model; that is reported and 0.6B is not used as a test bed for this failure.
+- **Failure reproduced / not reproduced / fails differently:** exactly as for 4B (trace objective fails the
+  rule with a bucket from 2,000 tokens up below −3.0 pp / trace passes / anything in between, treated as not
+  reproduced). The decision objective is reported and has no part in the verdict.
+- My guess before the run: enough long reasoning 55%; failure reproduced, given that, 70%.
+
+### How 0.6B and 4B are used together
+
+- A method tried on 0.6B goes to 4B before anything else. The condition for the 27B model registered above
+  (passes the rule in every bucket and a held-out-length test on 4B) is unchanged; a pass on 0.6B alone never
+  counts toward it.
+- If 0.6B reproduces the failure and 4B does not, the 0.6B result is reported as a property of the small model,
+  and 0.6B is not used to search for a method meant for 27B.
