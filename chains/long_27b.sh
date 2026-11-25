@@ -22,7 +22,7 @@
 #   For a plumbing test only: ROLL_ARGS, TRAIN_ARGS, REF_ARGS, EVAL_ARGS, HELDOUT_ARGS, CAL=<dir>, VAL_SAMPLES.
 # At the end (or at a stop) it packs results_27b_long.tar.gz - send that back.
 cd "$(dirname "$0")/.." || exit 1
-source "${VENV:-.venv27}/bin/activate" || { echo "no environment: run chains/probe_27b.sh first"; exit 1; }
+[ "${VENV:-.venv27}" = none ] || source "${VENV:-.venv27}/bin/activate" || { echo "no environment: run chains/probe_27b.sh first"; exit 1; }
 export BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3.8-27B} PYTHONUNBUFFERED=1 VLLM_USE_FLASHINFER_SAMPLER=0
 export JUDGE_WORKERS=${JUDGE_WORKERS:-2}
 STAGES=${STAGES:-pilot full main final}

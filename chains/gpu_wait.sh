@@ -28,6 +28,7 @@ settle() {
 
 # one_chain <lock file>: refuse to run the same chain twice at once (two copies share the cards and the output files).
 one_chain() {
+    [ -n "$NO_LOCK" ] && return 0
     command -v flock > /dev/null || return 0
     exec 9> "$1"
     flock -n 9 || { echo "this chain is already running here (lock $1). Stop it first, or wait for it."; exit 1; }

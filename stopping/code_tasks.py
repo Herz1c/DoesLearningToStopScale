@@ -76,7 +76,10 @@ def sandbox_command(worker=None):
     this one did not (every program failed, 2026-11-18): the whole system read-only, the home, project and
     temporary directories hidden, and only what the worker needs mounted back - the environment, its base
     interpreter, every prefix its python symlink chain passes through (uv keeps interpreters in the home
-    directory, possibly under a path that is itself a link), and the worker script."""
+    directory, possibly under a path that is itself a link), and the worker script.
+    With SANDBOX=user in the environment the weaker user_sandbox_command is used instead."""
+    if os.environ.get("SANDBOX") == "user":
+        return user_sandbox_command(worker)
     environment = Path(sys.prefix).resolve()
     python = Path(sys.prefix) / "bin" / "python"
     worker = Path(worker or WORKER).resolve()        # another worker script may use the same sandbox
@@ -100,6 +103,20 @@ def sandbox_command(worker=None):
     return command
 
 
+def user_sandbox_command(worker=None):
+    """Fallback for machines where bubblewrap cannot create namespaces (a Colab runtime, for one), chosen with
+    SANDBOX=user: the programs run as the unprivileged user nobody, in /tmp, with a cleared environment and the
+    same memory and CPU limits. It is weaker than bubblewrap - the network stays reachable and the rest of the
+    system is protected only by file permissions - so use it only on a throwaway machine, after checking that
+    nobody cannot write anything that matters there (notebooks/long_06b_colab.ipynb checks it)."""
+    worker = Path(worker or WORKER).resolve()
+    return ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "--",
+            "env", "-i", "-C", "/tmp", "HOME=/tmp", "PATH=/usr/bin:/bin", "OPENBLAS_NUM_THREADS=1",
+            "OMP_NUM_THREADS=1", "PYTHONHASHSEED=0", "PYTHONDONTWRITEBYTECODE=1",
+            shutil.which("prlimit") or "/usr/bin/prlimit", f"--as={MEMORY_BYTES}", f"--cpu={CPU_SECONDS}", "--",
+            sys.executable, str(worker)]
+
+
 def self_test():
     """Runs one right and one wrong program through the sandbox. Returns None when the verdicts are right,
     else what went wrong. bwrap starting is not enough: on the 27B cluster it started, yet every program
@@ -121,6 +138,8 @@ def self_test():
 def sandbox_works():
     """False on machines where bubblewrap cannot start (no user namespaces): model-written code cannot be
     run there, and every program would come back as failed."""
+    if os.environ.get("SANDBOX") == "user":
+        return shutil.which("setpriv") is not None
     try:
         return subprocess.run(["bwrap", "--unshare-all", "--ro-bind", "/", "/", "true"],
                               capture_output=True, timeout=30).returncode == 0

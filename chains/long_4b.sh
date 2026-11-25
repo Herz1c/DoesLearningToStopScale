@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# (Also runs the same pilot on Qwen3-0.6B: BASE_MODEL=Qwen/Qwen3-0.6B TAG=06b, see notebooks/long_06b_colab.ipynb.)
 # The long-reasoning pilot repeated on Qwen3-4B: the same questions, method and rule as on Qwen3.8-27B, to see
 # whether the smaller model shows the same failure (an adapter that learns a typical length instead of when its
 # answer is settled). If it does, 4B is the test bed for the next method. Registered in PREREGISTRATION.md.
@@ -15,16 +16,18 @@
 # One card is enough (GPUS="0", the default here); with GPUS="0 1" the work is shared.
 # Safe to stop and start again with the same command: finished parts are skipped.
 # Generation is capped at 32 768 tokens: the model's context is 40 960.
-# Optional environment: GPUS="0"; JUDGE_WORKERS=2; for a plumbing test only: MAX_TOKENS, CAL_DATA, VAL_DATA,
+# Optional environment: GPUS="0"; JUDGE_WORKERS=2; BASE_MODEL with TAG (Qwen/Qwen3-0.6B, TAG=06b); VENV=none;
+# NO_LOCK=1 (file systems without flock); SANDBOX=user (see stopping/code_tasks.py); for a plumbing test only: MAX_TOKENS, CAL_DATA, VAL_DATA,
 # TRAIN_ARGS, CAL_ARGS.
 # At the end (or at a stop) it packs results_4b_long.tar.gz - send that back.
 cd "$(dirname "$0")/.." || exit 1
-export VENV=${VENV:-.venv}
-source "$VENV/bin/activate" || { echo "no environment: run chains/setup.sh first"; exit 1; }
+export VENV=${VENV:-.venv}        # VENV=none: the Python already on the PATH (a Colab runtime)
+[ "$VENV" = none ] || source "$VENV/bin/activate" || { echo "no environment: run chains/setup.sh first"; exit 1; }
 export BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-4B} PYTHONUNBUFFERED=1 VLLM_USE_FLASHINFER_SAMPLER=0
+TAG=${TAG:-4b}                     # names of the folders, the log and the archive: TAG=06b for Qwen3-0.6B
 export JUDGE_WORKERS=${JUDGE_WORKERS:-2} GPUS=${GPUS:-0}
 MAX_TOKENS=${MAX_TOKENS:-32768}
-CAL=${CAL:-runs/4b_long_cal}
+CAL=${CAL:-runs/${TAG}_long_cal}
 CAL_DATA=${CAL_DATA:-data/long_cal_all.jsonl}
 set -- $GPUS
 GA=$1
@@ -52,8 +55,8 @@ part() {
         [ $attempt -eq 1 ] && stamp "$label: first try failed, trying once more (details in $log)"
     done
     stamp "$label FAILED - last lines of $log:"; tail -8 "$log"
-    tar czf results_4b_long.tar.gz --exclude="rollouts*.jsonl*" $CAL long_4b*.log 2>/dev/null
-    stamp "STOPPED at: $label - send back results_4b_long.tar.gz and long_4b.log, then start the same command again after the fix"
+    tar czf results_${TAG}_long.tar.gz --exclude="rollouts*.jsonl*" $CAL long_${TAG}*.log 2>/dev/null
+    stamp "STOPPED at: $label - send back results_${TAG}_long.tar.gz and long_${TAG}.log, then start the same command again after the fix"
     exit 1
 }
 engine() { ( export CUDA_VISIBLE_DEVICES=$GA; settle; "$@" ); }
@@ -66,5 +69,5 @@ part "calibration: forced answers judged" $CAL/.readouts_judged $CAL/judge.log p
 python stopping/readouts.py $CAL --report 2>/dev/null | tee $CAL/readouts_report.txt | tail -9
 
 stamp "pilot (chains/long_27b.sh, stage pilot)"
-CAL=$CAL RUN_DIR=${RUN_DIR:-runs/4b_long} CKPT_DIR=${CKPT_DIR:-checkpoints/4b_long} STAGES=pilot \
-    ROLL_ARGS="--max-tokens $MAX_TOKENS" PACK=results_4b_long PACK_EXTRA="$CAL long_4b*.log" bash chains/long_27b.sh
+CAL=$CAL RUN_DIR=${RUN_DIR:-runs/${TAG}_long} CKPT_DIR=${CKPT_DIR:-checkpoints/${TAG}_long} STAGES=pilot \
+    ROLL_ARGS="--max-tokens $MAX_TOKENS" PACK=results_${TAG}_long PACK_EXTRA="$CAL long_${TAG}*.log" bash chains/long_27b.sh
