@@ -138,3 +138,48 @@ of that weight were tried on the stand-in (none, 1, 4) and the last was kept; no
 
 On the stand-in only the trace objective passed the rule; the decision objective did not in any of the three
 settings. The pilot on the 27B model decides between them by the rule above, as written.
+
+### Note on timing (2026-11-25)
+
+The section "What had been seen" says the instructions for the pilot had been prepared when this file was
+committed. That was what I knew; it was not the whole picture. The pilot was started on the cluster on
+2026-11-24 at 08:58 (cluster clock, CET) by the collaborator who runs the cards. This file was pushed the same
+day at 16:16, while the second objective was still training. The comparison against the base model was
+computed at 18:06, and I first looked at any output of the run on 2026-11-25.
+
+So the rules above were written before any result existed and were not changed by the run, but **the public
+timestamp of this file is about seven hours after the pilot started, not before it.** For the pilot the
+pre-registration is therefore self-reported in the same sense as for 1.7B and 4B. Anything registered from
+here on is committed before its run starts.
+
+### Outcome of the pilot (2026-11-25)
+
+Run of 2026-11-24, 08:58–18:06, two H200 cards, no error or restart. Every code reply was graded again on a
+second machine with identical verdicts. 300 validation questions × 4 rollouts.
+
+| | trace | decision |
+| --- | ---: | ---: |
+| Overall accuracy change | −4.08 pp [−6.83, −1.42] | −15.92 pp [−18.67, −12.83] |
+| Overall saving of thinking tokens | 67.3% [62.9, 70.6] | 62.0% [54.8, 66.7] |
+| Bucket < 2k (190 questions) | +3.42 pp | −5.79 pp |
+| Bucket 2–8k (47) | −11.70 pp | −18.62 pp |
+| Bucket 8–32k (35) | −21.43 pp | −42.86 pp |
+| Bucket > 32k (28) | −20.54 pp | −46.43 pp |
+
+**Neither objective passes the rule** (overall at least −1.0 pp and every bucket at least −3.0 pp). As
+registered, the work stopped there: no further data were generated, no main training was run, and the reference
+sets were not opened. Criteria A–F are not met.
+
+What the adapters do, found after the fact and therefore not evidence for any rule:
+
+- The trace objective learned a typical length per kind of task instead of when its answer is settled. On
+  mathematics it thinks for a median of 216, 559 and 725 tokens on questions where the base model needs under
+  2k, 2–8k and 8–32k. It saves 67% where the calibration put the attainable saving at 38%.
+- Where reasoning is short it holds up: the < 2k bucket gains 3.4 pp at 65% saved.
+- The decision objective closes its thinking early and continues reasoning inside the answer (code answers up
+  to 23,000 tokens, 15% accuracy). After training it still gave about a 15% chance of stopping at each boundary
+  where it should go on, which compounds over tens of boundaries.
+- Suspected common cause, not tested: the settled point marks where the base model can still finish the work in
+  its answer, which is earlier than where the reasoning is done.
+
+Any continuation is a new plan and will be registered in this file before it runs.
