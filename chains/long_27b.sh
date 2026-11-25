@@ -36,6 +36,7 @@ V=$R/val
 VAL_DATA=${VAL_DATA:-data/long_val_all.jsonl}
 FULL_DATA=${FULL_DATA:-data/long_full_all.jsonl}
 VAL_SAMPLES=${VAL_SAMPLES:-4}
+PACK=${PACK:-results_27b_long}       # name of the archive; PACK_EXTRA: more paths to put into it
 mkdir -p $R $C $V
 stamp() { echo "[$(date '+%m-%d %H:%M:%S')] $*"; }
 has() { case " $STAGES " in *" $1 "*) return 0;; esac; return 1; }
@@ -67,10 +68,8 @@ finish() {
     for f in runs/27b_reference/long_sft.compare.txt runs/27b/long_sft_full1.compare.txt runs/27b/long_sft_full2.compare.txt; do
         [ -s $f ] && { echo; echo "== $f"; tail -14 $f; }
     done
-    tar czf results_27b_long.tar.gz --exclude="decision.jsonl" --exclude="*.before" --exclude="training_state.json" \
-        $R $C runs/27b_reference/long_sft runs/27b_reference/long_sft.* runs/27b/long_sft_full[12]* runs/27b/heldout_long_sft* \
-        long_27b*.log 2>/dev/null
-    stamp "$1 - send back results_27b_long.tar.gz ($(du -h results_27b_long.tar.gz | cut -f1))"
+    tar czf $PACK.tar.gz --exclude="decision.jsonl" --exclude="*.before" --exclude="training_state.json"         $R $C $PACK_EXTRA runs/27b_reference/long_sft runs/27b_reference/long_sft.* runs/27b/long_sft_full[12]* runs/27b/heldout_long_sft*         long_27b*.log 2>/dev/null
+    stamp "$1 - send back $PACK.tar.gz ($(du -h $PACK.tar.gz | cut -f1))"
     exit "${2:-0}"
 }
 stop() { finish "STOPPED at: $1 (fix or report it, then start the same command again)" 1; }

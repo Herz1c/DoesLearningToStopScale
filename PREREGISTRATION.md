@@ -183,3 +183,60 @@ What the adapters do, found after the fact and therefore not evidence for any ru
   its answer, which is earlier than where the reasoning is done.
 
 Any continuation is a new plan and will be registered in this file before it runs.
+
+---
+
+## Replication of the pilot on Qwen3-4B
+
+Registered 2026-11-25, before the run. The commit that adds this section is its timestamp; the run is started
+only after that commit is public.
+
+### Purpose
+
+The 27B pilot failed in a specific way (an adapter that learns a typical length per kind of task). Searching
+for a better method on the 27B model costs a day and many card-hours per attempt. This run asks one question:
+**does the same pilot, unchanged, fail the same way on Qwen3-4B?** If it does, 4B becomes the test bed for the
+next method and the 27B model is used again only for a method that has passed there. No new method is tried in
+this run.
+
+### What had been seen
+
+- Everything listed for version 2 above, and the outcome of the 27B pilot.
+- One analysis of the 27B calibration data made after that outcome: in 49% of the mathematics rollouts that
+  settle early (code 21%, instructions 45%, multiple choice 85%) the answer is already right twice at the first
+  read-out boundary, about the second paragraph. The earlier suspicion, that the base model finishes the work
+  in a longer answer, was not supported (forced answers at the settled point are as long as the model's own).
+- Qwen3-4B on the short benchmarks and with the short-task recipe (the README's 4B result).
+
+Not seen: Qwen3-4B on any of the long-reasoning pools, with or without an adapter.
+
+### Protocol
+
+The 27B pilot, with the model replaced: the same 962 calibration questions (2 rollouts, forced answers at up to
+12 boundaries), the same 300 validation questions (4 rollouts), the same two objectives with the same
+hyper-parameters, the same validation measure and rule. Differences, all forced by the model or the machine:
+
+- generation is capped at 32,768 tokens instead of 65,536 (the model's context is 40,960 tokens), so a reply
+  that would have been longer counts as capped, i.e. wrong, for the base model and the adapters alike;
+- one card (RTX PRO 6000, 96 GB) instead of two;
+- Qwen3-4B belongs to the Qwen3 family, the 27B model to a later one; prompt template and tokenizer differ.
+
+### Reading of the result (fixed now)
+
+- **Enough long reasoning to judge:** at least 20 of the 300 validation questions must have a base mean
+  thinking of 8,000 tokens or more. If fewer do, these pools do not test long reasoning on this model; that is
+  reported and 4B is not used as the test bed without a new, registered set of questions.
+- **Failure reproduced:** the trace objective does not pass the rule, and at least one length bucket from
+  2,000 tokens up is below −3.0 pp. Then 4B with these pools is the test bed.
+- **Failure not reproduced:** the trace objective passes the rule. That is reported as a difference between
+  the two models; 4B is then not a test bed for this failure, and no method search is run on it.
+- Anything in between (fails only overall, or only in the < 2k bucket) is reported as "fails differently" and
+  treated as not reproduced.
+- The decision objective is run and reported; it has no part in the verdict.
+- My guess before the run: enough long reasoning 80%; failure reproduced, given that, 75%.
+
+### Condition for going back to the 27B model
+
+A new method goes to the 27B model only after, on the 4B test bed, it passes the same rule in every length
+bucket and passes a test on reasoning lengths it was not trained on. That test and the method are registered
+here before they are run.
