@@ -16,7 +16,7 @@ evaluation's sampling), grade them (stopping/grading.py) and reward
 
 where L is the answer's length in tokens and m_domain the domain's mean length measured on the
 first batch (fixed afterwards). The length penalty is normalised per domain, not per question,
-because the evaluation's metric is a ratio of sums dominated by long answers (CLAUDE.md). Wrong or
+because the evaluation's metric is a ratio of sums dominated by long answers. Wrong or
 capped answers get 0 whatever their length, so the model is never paid for giving up. Advantage =
 R minus the group mean (no division by the group's spread, which would inflate tiny differences).
 One on-policy update per batch, so the importance ratio is 1 and the objective is the plain policy
