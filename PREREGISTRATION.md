@@ -289,3 +289,145 @@ questions, cap of 32,768 tokens, objectives, hyper-parameters, measure and rule)
   counts toward it.
 - If 0.6B reproduces the failure and 4B does not, the 0.6B result is reported as a property of the small model,
   and 0.6B is not used to search for a method meant for 27B.
+
+---
+
+## Next method on the test bed: two candidates
+
+Registered 2026-11-26, before any code for either candidate has been run on a model. The commit that adds this
+section is its timestamp. When this was written I had not seen a result from either the 4B or the 0.6B
+replication.
+
+### When this is run
+
+This runs only on a model where the replication above reads **failure reproduced** (4B or 0.6B). If neither
+model reproduces the failure, this section is not run, and that is reported. A model that does reproduce it is
+called the *test bed* below. If both do, 0.6B may be used first, to find faults in the code; only the 4B result
+counts (see "How 0.6B and 4B are used together").
+
+### The idea both candidates share
+
+The 27B pilot learned a typical length for each kind of task. Both candidates replace the oracle cut with a
+training signal that depends on the question itself and is measured on the model's own answers. A question the
+model needs long reasoning for should therefore keep it.
+
+- **A. Length reward by difficulty** (after LASER-D, arXiv 2505.15612, Liu et al. 2025). RL in which a short
+  right answer earns a bonus only up to a target length. The target is set separately for easy, medium and hard
+  questions, from the model's own success rate.
+- **B. Online preference pairs per question** (after the online DPO of A. le Moigne, "ThinkingCap", 2026, and
+  his public code). The model answers new questions in rounds, and pairs are built only between answers to the
+  same question: shorter right over longer right, and right over a shorter wrong one. A brake stops shortening
+  for a kind of task that loses accuracy or saves more than its calibrated limit.
+
+Both are my adaptations to long reasoning and to this repository; the differences from the originals are listed
+under each candidate. Neither original was tested on reasoning of this length.
+
+### Data (both candidates)
+
+- **Training questions:** the 962 calibration questions (mathematics 250, multiple choice 250, code 233,
+  instructions 129, function calling 100). For these, the test bed's base model already has two rollouts and the
+  forced read-outs. Before training, one sixth of each domain (42, 42, 39, 21, 16; 160 in all; drawn with seed 0)
+  is set apart as the **selection set**. The remaining 802 are the training questions. No other questions are
+  added.
+- **Validation:** the same 300 questions as the pilot, with 4 rollouts, the same measure and the same rule
+  (overall change at least −1.0 pp, every length bucket at least −3.0 pp). They are opened **once per
+  candidate**, for the one checkpoint the selection set picked.
+- **Token cap:** 32,768 generated tokens for training and validation alike, as in the replication. A capped reply
+  counts as wrong.
+- **Adapter:** LoRA r 16, α 32, dropout 0.05 on the attention and MLP projections, trained from the base model
+  with no supervised stage first.
+- **Sampling for training answers:** the validation sampling (temperature 1.0, top-p 0.95, top-k 20).
+
+### Candidate A: length reward by difficulty
+
+- **Training:** GRPO as in `stopping/train_grpo.py`.
+  - 16 questions per step, 8 answers each, one on-policy update per batch.
+  - Advantage = reward − group mean.
+  - Learning rate 1e-5, no KL term.
+  - 50 steps; the questions of a step are drawn without replacement from all training questions (seed 0), so
+    each is used at most once. Checkpoints every 10 steps.
+- **Reward:** +1 right, −0.5 wrong or capped, −1 when no answer can be read. A right answer whose length
+  (thinking + answer tokens) is at most the target L_d of its question's difficulty bucket gets +0.5 more. Long
+  right answers are not penalised; they only miss the bonus.
+- **Difficulty bucket** of a question at a step, from the share of its 8 answers that are right: easy above 2/3,
+  medium 1/3 to 2/3, hard below 1/3.
+- **Target L_d:** the smallest l in 2,048, 3,072, …, 32,768 such that (share of the bucket's answers not longer
+  than l) × c_d ≥ 1, with c_d = 6, 3, 1 for easy, medium, hard. This is the paper's expected-correct-responses
+  rule for 8 answers. Before the first update every L_d is 32,768, so no bonus can push length down yet. After
+  that, L_d is recomputed every 10 steps.
+- **Differences from the paper:**
+  - L_d is recomputed from the answers of the last 10 training steps instead of from a separate monitoring set
+    (no extra generation).
+  - The lower end of the search is 2,048 instead of 4,096 or 8,192.
+  - The base model is Qwen3, not an R1 distillation.
+  - The tasks cover five domains, not mathematics only.
+  - LoRA, not full weights.
+
+### Candidate B: online preference pairs per question
+
+- **Rounds:** 8. The training questions are split (seed 0) into 8 parts of about 100, each with the same domain
+  proportions. Each round takes the next part and 8 answers to each question from the current adapter. The
+  first round answers with the base model. With about 10 function-calling and 13 instruction questions per round,
+  the brake for those two domains is noisy; that is accepted, not tuned.
+- **Base statistics per question,** from the two base rollouts of the calibration:
+  - p0 = share right;
+  - b = mean thinking of the right rollouts (if neither was right, the mean thinking of both).
+- **Pairs per question** are built from the current answers only, at most 2 per question:
+  - **shorten:** only if at least 2 answers are right and clean (finished, readable) and the share right is at
+    least min(p0, 0.75).
+    - Chosen = the right answer with the shortest thinking; rejected = the right answer with the longest.
+    - The pair is kept only if the rejected answer thinks at least 1.3 times as long.
+    - The chosen answer must think at least 0.4 × b.
+  - **right over shorter wrong:** only if some answers are right and some wrong.
+    - Rejected = the wrong answer with the shortest thinking.
+    - Chosen = the shortest right answer that thinks at least as long as the rejected one. If no right answer
+      thinks that long, chosen = the longest right answer.
+- **Brake per domain,** measured on the round's own questions against their base statistics:
+  - A domain is held for the next round when its saving of thinking tokens reaches its cap, or when its accuracy
+    change is −3.0 pp or worse.
+  - A held domain gets no shorten pairs; right-over-wrong pairs are still built.
+  - The cap per domain is the share of thinking after the settled point in the test bed's own calibration
+    (rollouts that end right). It is computed by `stopping/readouts.py --report` before training.
+- **Long brake:** if the round's questions with base thinking of 8,000 tokens or more lose 3.0 pp or more, no
+  shorten pairs are built in the next round for questions with base thinking of 2,000 tokens or more.
+- **DPO settings:** β 0.1; reference = the base model (adapter off); learning rate 1.4e-5 with 2 warm-up steps;
+  16 pairs per step; each pair seen once; gradient clip 1.0; the same adapter continued across rounds, with no
+  merging.
+- **Differences from the original:**
+  - Fewer, longer rounds.
+  - Base statistics come from 2 rollouts per question, not 8.
+  - No loop, format or counting pairs.
+  - The right-over-wrong pair always rejects the shortest wrong answer.
+  - The long brake is new.
+  - The caps come from the calibration, not from earlier test results.
+  - The kinds of task are the five domains here.
+
+### Choosing a checkpoint and a winner
+
+- **Checkpoints judged on the selection set:** 4 rollouts per question, the same measure. Length buckets use the
+  base's mean thinking from its two calibration rollouts. Candidate A is judged after steps 20, 30, 40 and 50;
+  candidate B after rounds 2, 4, 6 and 8.
+- **Each candidate's checkpoint** is the one that passes the rule on the selection set with the largest overall
+  saving. **If none passes, that candidate fails, and its validation is not run.**
+- **Validation:** the chosen checkpoint is run once on the validation questions. A candidate **passes** if it
+  passes the rule there. If both pass, the winner is the one with the larger overall saving.
+- **No tuning after this commit:** nothing in either candidate is tuned after it. A fault found in the code (a
+  crash, a wrong grade) is fixed and noted. Any change of a number or rule above is added here as a dated
+  amendment before the run it affects.
+
+### Held-out lengths (the condition for 27B registered above)
+
+This applies only to a candidate that passes. It is trained again, unchanged, on the training questions whose
+base mean thinking is below 8,000 tokens, and its checkpoint is chosen by the selection set in the same way.
+
+It passes the held-out test if, on the validation questions, the rule holds and both buckets from 8,000 tokens up
+(or the one bucket they merge into) are at least −3.0 pp. Only a candidate that passes this goes to the 27B
+model, under a new registration.
+
+### My guess before any run
+
+Given a test bed:
+- A passes 30%;
+- B passes 35%;
+- at least one passes 50%;
+- a candidate that passes also passes the held-out lengths 50%.
